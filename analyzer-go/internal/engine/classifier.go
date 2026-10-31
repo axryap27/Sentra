@@ -10,40 +10,34 @@ import (
 //go:embed model.json
 var modelJSON []byte
 
-// TreeNode represents a single node in a decision tree.
-type TreeNode struct {
-	FeatureIndex int     `json:"f"` // index into feature vector (-1 for leaf)
-	Threshold    float64 `json:"t"` // split threshold
-	Left         int     `json:"l"` // index of left child node
-	Right        int     `json:"r"` // index of right child node
-	Prediction   int     `json:"p"` // class label (only valid for leaves where f == -1)
-	Confidence   float64 `json:"c"` // prediction confidence at this leaf
+// modelFile is the on-disk format written by training/train_model.py.
+type modelFile struct {
+	Version     int                           `json:"version"`
+	Features    []string                      `json:"features"`
+	ClassNames  []string                      `json:"class_names"`
+	NumClasses  int                           `json:"num_classes"`
+	Thresholds  map[string]map[string]float64 `json:"thresholds"` // language -> rule -> threshold
+	Trees       []treeFile                    `json:"trees"`
+	TrainedOn   string                        `json:"trained_on"`
+	Description string                        `json:"description"`
 }
 
-// DecisionTree is a flattened decision tree (array of nodes, root at index 0).
-type DecisionTree struct {
-	Nodes []TreeNode `json:"nodes"`
+type treeFile struct {
+	// Parallel arrays, root at index 0. Feature[i] == -1 marks a leaf, whose
+	// class distribution is Value[i] as sparse [class, probability] pairs.
+	Feature   []int          `json:"f"`
+	Threshold []float64      `json:"t"`
+	Left      []int          `json:"l"`
+	Right     []int          `json:"r"`
+	Value     [][][2]float64 `json:"v"`
 }
 
-// RandomForestModel is the full model containing multiple decision trees.
-type RandomForestModel struct {
-	Trees      []DecisionTree `json:"trees"`
-	ClassNames []string       `json:"class_names"` // maps class index → label (e.g., "CWE-78")
-	Severities []string       `json:"severities"`  // maps class index → severity
-	NumClasses int            `json:"num_classes"`
-}
-
-// Prediction is the output of the classifier.
-type Prediction struct {
-	ClassIndex int
-	ClassName  string
-	Severity   string
-	Confidence float64
-}
-
-// RandomForestClassifier performs inference with an embedded model.
+// RandomForestClassifier runs inference with the embedded Random Forest.
 type RandomForestClassifier struct {
-	model *RandomForestModel
+	trees      []treeFile
+	numClasses int
+	classIndex map[string]int
+	thresholds map[string]map[string]float64
 }
 
 var (
@@ -52,97 +46,83 @@ var (
 	classifierErr      error
 )
 
-// GetClassifier returns a singleton classifier loaded from the embedded model.
+// GetClassifier returns the classifier loaded from the embedded model.
 func GetClassifier() (*RandomForestClassifier, error) {
 	classifierOnce.Do(func() {
-		var model RandomForestModel
-		if err := json.Unmarshal(modelJSON, &model); err != nil {
-			classifierErr = fmt.Errorf("failed to load model: %w", err)
-			return
-		}
-		classifierInstance = &RandomForestClassifier{model: &model}
+		classifierInstance, classifierErr = loadClassifier(modelJSON)
 	})
 	return classifierInstance, classifierErr
 }
 
-// Predict classifies a single feature vector.
-func (rf *RandomForestClassifier) Predict(features []float64) Prediction {
-	if len(rf.model.Trees) == 0 {
-		return Prediction{ClassIndex: 0, ClassName: "safe", Severity: "Low", Confidence: 0}
+func loadClassifier(data []byte) (*RandomForestClassifier, error) {
+	var m modelFile
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parse model: %w", err)
 	}
-
-	// Collect votes from all trees
-	votes := make([]int, rf.model.NumClasses)
-	totalConfidence := make([]float64, rf.model.NumClasses)
-
-	for _, tree := range rf.model.Trees {
-		classIdx, confidence := rf.traverseTree(&tree, features)
-		if classIdx >= 0 && classIdx < rf.model.NumClasses {
-			votes[classIdx]++
-			totalConfidence[classIdx] += confidence
+	if m.Version != 2 {
+		return nil, fmt.Errorf("model version %d, want 2", m.Version)
+	}
+	if len(m.Features) != NumFeatures {
+		return nil, fmt.Errorf("model has %d features, engine has %d", len(m.Features), NumFeatures)
+	}
+	for i, name := range m.Features {
+		if name != FeatureNames[i] {
+			return nil, fmt.Errorf("model feature %d is %q, engine expects %q", i, name, FeatureNames[i])
 		}
 	}
-
-	// Find majority vote
-	bestClass := 0
-	bestVotes := 0
-	for i, v := range votes {
-		if v > bestVotes {
-			bestVotes = v
-			bestClass = i
+	rf := &RandomForestClassifier{trees: m.Trees, numClasses: m.NumClasses, classIndex: map[string]int{}, thresholds: m.Thresholds}
+	for i, n := range m.ClassNames {
+		rf.classIndex[n] = i
+	}
+	for ti, t := range m.Trees {
+		n := len(t.Feature)
+		if n == 0 || len(t.Threshold) != n || len(t.Left) != n || len(t.Right) != n || len(t.Value) != n {
+			return nil, fmt.Errorf("tree %d is malformed", ti)
 		}
 	}
-
-	confidence := float64(bestVotes) / float64(len(rf.model.Trees))
-	if bestVotes > 0 {
-		confidence = totalConfidence[bestClass] / float64(bestVotes)
-	}
-
-	className := "safe"
-	severity := "Low"
-	if bestClass < len(rf.model.ClassNames) {
-		className = rf.model.ClassNames[bestClass]
-	}
-	if bestClass < len(rf.model.Severities) {
-		severity = rf.model.Severities[bestClass]
-	}
-
-	return Prediction{
-		ClassIndex: bestClass,
-		ClassName:  className,
-		Severity:   severity,
-		Confidence: confidence,
-	}
+	return rf, nil
 }
 
-// traverseTree walks a single decision tree and returns (classIndex, confidence).
-func (rf *RandomForestClassifier) traverseTree(tree *DecisionTree, features []float64) (int, float64) {
-	if len(tree.Nodes) == 0 {
-		return 0, 0
+// Proba returns P(class) averaged over the forest, like sklearn's predict_proba.
+func (rf *RandomForestClassifier) Proba(features []float64, class string) float64 {
+	if rf == nil {
+		return 1 // no model: rely on the deterministic gates alone
 	}
-
-	nodeIdx := 0
-	for {
-		if nodeIdx < 0 || nodeIdx >= len(tree.Nodes) {
-			return 0, 0
+	ci, ok := rf.classIndex[class]
+	if !ok || len(rf.trees) == 0 {
+		return 0
+	}
+	sum := 0.0
+	for ti := range rf.trees {
+		t := &rf.trees[ti]
+		i := 0
+		for t.Feature[i] >= 0 {
+			v := 0.0
+			if f := t.Feature[i]; f < len(features) {
+				v = features[f]
+			}
+			if v <= t.Threshold[i] {
+				i = t.Left[i]
+			} else {
+				i = t.Right[i]
+			}
 		}
-		node := tree.Nodes[nodeIdx]
-
-		// Leaf node
-		if node.FeatureIndex == -1 {
-			return node.Prediction, node.Confidence
-		}
-
-		// Interior node: compare feature against threshold
-		featureVal := 0.0
-		if node.FeatureIndex >= 0 && node.FeatureIndex < len(features) {
-			featureVal = features[node.FeatureIndex]
-		}
-
-		if featureVal <= node.Threshold {
-			nodeIdx = node.Left
-		} else {
-			nodeIdx = node.Right
+		for _, cp := range t.Value[i] {
+			if int(cp[0]) == ci {
+				sum += cp[1]
+				break
+			}
 		}
 	}
+	return sum / float64(len(rf.trees))
+}
+
+// Threshold is the minimum probability at which a rule's finding is reported in
+// lang. Thresholds exist only where they were tuned on real labeled code (Java,
+// OWASP Benchmark); elsewhere it is 0 and the deterministic gates decide alone.
+func (rf *RandomForestClassifier) Threshold(lang Language, rule string) float64 {
+	if rf == nil {
+		return 0
+	}
+	return rf.thresholds[string(lang)][rule]
 }

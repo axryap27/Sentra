@@ -44,3 +44,17 @@ func BenchmarkAnalyze(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkProba measures Random Forest inference for one candidate.
+func BenchmarkProba(b *testing.B) {
+	clf, err := GetClassifier()
+	if err != nil {
+		b.Fatal(err)
+	}
+	fv := make([]float64, NumFeatures)
+	fv[0], fv[2], fv[15], fv[17], fv[14] = CWESQLInject, 1, 1, 1, 3
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		clf.Proba(fv, "sql_injection")
+	}
+}

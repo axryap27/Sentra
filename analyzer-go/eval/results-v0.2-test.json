@@ -1,0 +1,90 @@
+{
+  "cases": 981,
+  "metrics": {
+    "_overall": {
+      "TP": 86,
+      "FP": 91,
+      "TN": 389,
+      "FN": 415,
+      "cases": 981,
+      "precision": 0.4858757062146893,
+      "recall": 0.17165668662674652,
+      "f1": 0.25368731563421826,
+      "fpr": 0.18958333333333333,
+      "owasp_score": -0.017926646706586807
+    },
+    "command_injection": {
+      "TP": 13,
+      "FP": 7,
+      "TN": 43,
+      "FN": 37,
+      "cases": 100,
+      "precision": 0.65,
+      "recall": 0.26,
+      "f1": 0.37142857142857144,
+      "fpr": 0.14,
+      "owasp_score": 0.12
+    },
+    "path_traversal": {
+      "TP": 0,
+      "FP": 0,
+      "TN": 54,
+      "FN": 53,
+      "cases": 107,
+      "precision": 0,
+      "recall": 0,
+      "f1": 0,
+      "fpr": 0,
+      "owasp_score": 0
+    },
+    "sql_injection": {
+      "TP": 0,
+      "FP": 0,
+      "TN": 93,
+      "FN": 109,
+      "cases": 202,
+      "precision": 0,
+      "recall": 0,
+      "f1": 0,
+      "fpr": 0,
+      "owasp_score": 0
+    },
+    "weak_crypto": {
+      "TP": 52,
+      "FP": 43,
+      "TN": 46,
+      "FN": 52,
+      "cases": 193,
+      "precision": 0.5473684210526316,
+      "recall": 0.5,
+      "f1": 0.5226130653266332,
+      "fpr": 0.48314606741573035,
+      "owasp_score": 0.01685393258426965
+    },
+    "weak_randomness": {
+      "TP": 21,
+      "FP": 41,
+      "TN": 69,
+      "FN": 66,
+      "cases": 197,
+      "precision": 0.3387096774193548,
+      "recall": 0.2413793103448276,
+      "f1": 0.28187919463087246,
+      "fpr": 0.37272727272727274,
+      "owasp_score": -0.13134796238244514
+    },
+    "xss": {
+      "TP": 0,
+      "FP": 0,
+      "TN": 84,
+      "FN": 98,
+      "cases": 182,
+      "precision": 0,
+      "recall": 0,
+      "f1": 0,
+      "fpr": 0,
+      "owasp_score": 0
+    }
+  },
+  "subset": "test"
+}

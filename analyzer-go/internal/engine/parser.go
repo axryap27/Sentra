@@ -29,6 +29,13 @@ type Candidate struct {
 	ArgSource          string // raw text of the argument list
 	AssignedIdentifier string // assignments: left-hand side
 	AssignedValue      string // assignments: right-hand side
+	ValueIsLiteral     bool   // assignments: right-hand side is a plain string literal
+
+	// Dataflow facts about the arguments (calls) or assigned value (assignments).
+	Arg valueInfo
+	// FirstArgIsString is true when the first argument is a string literal or
+	// string expression (not a function), e.g. setTimeout("code", 10).
+	FirstArgIsString bool
 }
 
 // scope is the context inherited from a node's ancestors. It is maintained as a
@@ -38,6 +45,7 @@ type scope struct {
 	inComment, inTry, inCond, inLoop bool
 	fnName                           string
 	fnPublic                         bool
+	branchDepth                      int // nesting of conditionals, loops and try blocks
 }
 
 type walker struct {
@@ -46,6 +54,7 @@ type walker struct {
 	src        []byte
 	lineStarts []int
 	sc         scope
+	frames     []frame // variable environments, innermost last (see taint.go)
 	out        []Candidate
 }
 
@@ -61,7 +70,7 @@ func parseCandidates(p *sitter.Parser, lang Language, kinds []nodeKind, src []by
 		return nil
 	}
 
-	w := &walker{lang: lang, kinds: kinds, src: src, lineStarts: lineIndex(src)}
+	w := &walker{lang: lang, kinds: kinds, src: src, lineStarts: lineIndex(src), frames: []frame{{}}}
 	cur := sitter.NewTreeCursor(root)
 	defer cur.Close()
 	w.visit(cur, 0)
@@ -84,7 +93,7 @@ func (w *walker) visit(cur *sitter.TreeCursor, depth int) {
 		w.inspect(n, kind, depth)
 	}
 
-	saved := w.sc
+	saved, savedFrames := w.sc, len(w.frames)
 	if kind&kindScope != 0 {
 		w.enter(n, kind)
 	}
@@ -98,6 +107,7 @@ func (w *walker) visit(cur *sitter.TreeCursor, depth int) {
 		cur.GoToParent()
 	}
 	w.sc = saved
+	w.frames = w.frames[:savedFrames]
 }
 
 // enter updates the scope for n's descendants.
@@ -107,11 +117,17 @@ func (w *walker) enter(n *sitter.Node, kind nodeKind) {
 		w.sc.inComment = true
 	case kind&kindTry != 0:
 		w.sc.inTry = true
+		w.sc.branchDepth++
 	case kind&kindCond != 0:
 		w.sc.inCond = true
+		w.sc.branchDepth++
 	case kind&kindLoop != 0:
 		w.sc.inLoop = true
+		w.sc.branchDepth++
+		w.forEachBinding(n)
 	case kind&kindFunc != 0:
+		w.sc.branchDepth = 0
+		w.pushFrame(w.text(paramsNode(n)))
 		if w.sc.fnName == "" { // outermost enclosing function, as before
 			if name := n.ChildByFieldName("name"); name != nil {
 				if fn := w.text(name); fn != "" {
@@ -154,6 +170,41 @@ func (w *walker) inspect(n *sitter.Node, kind nodeKind, depth int) {
 	w.out = append(w.out, *c)
 }
 
+// paramsNode finds a function's parameter list.
+func paramsNode(fn *sitter.Node) *sitter.Node {
+	for _, field := range []string{"parameters", "parameter"} {
+		if p := fn.ChildByFieldName(field); p != nil {
+			return p
+		}
+	}
+	// C/C++: function_definition -> declarator (function_declarator) -> parameters
+	if d := fn.ChildByFieldName("declarator"); d != nil {
+		if p := d.ChildByFieldName("parameters"); p != nil {
+			return p
+		}
+	}
+	return nil
+}
+
+// forEachBinding gives a for-each loop variable the facts of the iterated value:
+// for (Cookie c : cookies), for x in xs, for (const x of xs).
+func (w *walker) forEachBinding(n *sitter.Node) {
+	var target, iter *sitter.Node
+	for _, pair := range [][2]string{{"name", "value"}, {"left", "right"}, {"pattern", "value"}} {
+		if t, v := n.ChildByFieldName(pair[0]), n.ChildByFieldName(pair[1]); t != nil && v != nil {
+			target, iter = t, v
+			break
+		}
+	}
+	if target == nil {
+		return
+	}
+	info := w.analyzeExpr(w.clipped(iter, maxArgText, false))
+	for _, name := range assignedNames(w.text(target)) {
+		w.assign(name, info)
+	}
+}
+
 // nodeKind classifies a tree-sitter symbol for the walker.
 type nodeKind uint8
 
@@ -188,11 +239,13 @@ func kindOf(typ string) nodeKind {
 	case "if_statement", "if_expression", "conditional_expression",
 		"switch_statement", "match_expression", "guard":
 		return kindCond
-	case "for_statement", "while_statement", "for_expression",
-		"do_statement", "loop_expression", "foreach_statement":
+	case "for_statement", "while_statement", "for_expression", "enhanced_for_statement",
+		"for_in_statement", "do_statement", "loop_expression", "foreach_statement":
 		return kindLoop
 	case "function_definition", "function_declaration", "method_declaration",
-		"method_definition", "function_item", "arrow_function":
+		"method_definition", "function_item", "arrow_function", "constructor_declaration",
+		"lambda", "lambda_expression", "function_expression", "func_literal",
+		"closure_expression", "local_function_statement", "anonymous_function_creation_expression":
 		return kindFunc
 	}
 	return 0
@@ -222,7 +275,7 @@ func isAssignmentNode(t string) bool {
 	switch t {
 	case "assignment", "assignment_expression", "variable_declaration",
 		"variable_declarator", "let_declaration", "short_var_declaration",
-		"augmented_assignment":
+		"augmented_assignment", "augmented_assignment_expression", "init_declarator":
 		return true
 	}
 	return false
@@ -234,19 +287,48 @@ func (w *walker) callCandidate(n *sitter.Node) *Candidate {
 		return nil
 	}
 	c := &Candidate{Name: name}
-	c.ArgCount, c.HasStringConcatArg, c.ArgSource = w.argInfo(n)
+	var args *sitter.Node
+	c.ArgCount, c.HasStringConcatArg, c.ArgSource, args = w.argInfo(n)
+	if args != nil {
+		inner := c.ArgSource
+		if len(inner) >= 2 && inner[0] == '(' {
+			inner = inner[1 : len(inner)-1]
+		}
+		c.Arg = w.analyzeExpr(inner)
+		if first := args.NamedChild(0); first != nil {
+			t := first.Type()
+			c.FirstArgIsString = strings.Contains(t, "string") || t == "binary_expression" || t == "template_literal"
+		}
+	} else {
+		c.Arg = valueInfo{constant: true}
+	}
+	// recv.add(x), sb.append(x), list.push(x): the receiver now carries x's facts.
+	if dot := strings.LastIndexByte(name, '.'); dot > 0 && mutators[name[dot+1:]] {
+		recv := name[:dot]
+		if names := assignedNames(recv); len(names) == 1 && names[0] == recv {
+			old, _ := w.lookup(recv)
+			w.assign(recv, valueInfo{flags: old.flags | c.Arg.flags | tConcat, constant: old.constant && c.Arg.constant})
+		}
+	}
 	return c
 }
 
 func (w *walker) assignmentCandidate(n *sitter.Node) *Candidate {
 	var ident, value string
-	if left := n.ChildByFieldName("left"); left != nil {
-		ident = w.clipped(left, maxNameText, true)
+	var valueNode *sitter.Node
+	for _, f := range []string{"left", "name", "pattern", "declarator"} {
+		if left := n.ChildByFieldName(f); left != nil {
+			ident = w.clipped(left, maxNameText, true)
+			break
+		}
 	}
-	if right := n.ChildByFieldName("right"); right != nil {
-		value = w.clipped(right, maxArgText, false)
+	for _, f := range []string{"right", "value"} {
+		if right := n.ChildByFieldName(f); right != nil {
+			valueNode = right
+			break
+		}
 	}
-	if ident == "" {
+	if ident == "" || valueNode == nil {
 		for i := 0; i < int(n.ChildCount()); i++ {
 			child := n.Child(i)
 			if child == nil {
@@ -259,8 +341,8 @@ func (w *walker) assignmentCandidate(n *sitter.Node) *Candidate {
 				}
 			case "string", "string_literal", "template_string", "raw_string_literal",
 				"interpreted_string_literal", "encapsed_string":
-				if value == "" {
-					value = w.clipped(child, maxArgText, false)
+				if valueNode == nil {
+					valueNode = child
 				}
 			}
 		}
@@ -268,7 +350,30 @@ func (w *walker) assignmentCandidate(n *sitter.Node) *Candidate {
 	if ident == "" {
 		return nil
 	}
-	return &Candidate{Name: ident, AssignedIdentifier: ident, AssignedValue: value}
+	c := &Candidate{Name: ident, AssignedIdentifier: ident, Arg: valueInfo{constant: true}}
+	if valueNode != nil {
+		value = w.clipped(valueNode, maxArgText, false)
+		c.AssignedValue = value
+		t := valueNode.Type()
+		c.ValueIsLiteral = (strings.Contains(t, "string") && !strings.Contains(t, "template")) || t == "encapsed_string"
+		c.Arg = w.analyzeExpr(value)
+	}
+
+	// Record the new value of local variables for later sinks.
+	info := c.Arg
+	augmented := strings.HasPrefix(n.Type(), "augmented")
+	if op := n.ChildByFieldName("operator"); op != nil && w.text(op) != "=" {
+		augmented = true
+	}
+	for _, name := range assignedNames(ident) {
+		if augmented {
+			old, _ := w.lookup(name)
+			w.assign(name, valueInfo{flags: old.flags | info.flags | tConcat, constant: old.constant && info.constant})
+		} else if valueNode != nil {
+			w.assign(name, info)
+		}
+	}
+	return c
 }
 
 func (w *walker) keywordArgCandidate(n *sitter.Node) *Candidate {
@@ -313,8 +418,7 @@ func (w *walker) functionName(n *sitter.Node) string {
 }
 
 // argInfo counts arguments and detects string building in them.
-func (w *walker) argInfo(n *sitter.Node) (count int, concat bool, text string) {
-	var args *sitter.Node
+func (w *walker) argInfo(n *sitter.Node) (count int, concat bool, text string, args *sitter.Node) {
 	for i := 0; i < int(n.ChildCount()); i++ {
 		child := n.Child(i)
 		if child == nil {
@@ -329,7 +433,7 @@ func (w *walker) argInfo(n *sitter.Node) (count int, concat bool, text string) {
 		args = n.ChildByFieldName("arguments")
 	}
 	if args == nil {
-		return 0, false, ""
+		return 0, false, "", nil
 	}
 	text = w.clipped(args, maxArgText, false)
 	for i := 0; i < int(args.ChildCount()); i++ {
@@ -348,7 +452,7 @@ func (w *walker) argInfo(n *sitter.Node) (count int, concat bool, text string) {
 	if !concat {
 		concat = containsConcatPattern(text)
 	}
-	return count, concat, text
+	return count, concat, text, args
 }
 
 func (w *walker) text(n *sitter.Node) string {
@@ -422,22 +526,25 @@ func (w *walker) clipped(n *sitter.Node, limit int, tail bool) string {
 	return string(w.src[start:end])
 }
 
-// containsConcatPattern checks raw text for string concatenation/interpolation.
+// containsConcatPattern checks raw text for string concatenation/interpolation:
+// a '+' outside string literals, an f-string, or a template literal.
 func containsConcatPattern(text string) bool {
 	if strings.Contains(text, "f\"") || strings.Contains(text, "f'") || strings.Contains(text, "${") {
 		return true
 	}
-	inString := false
-	var prev byte
+	var quote byte // the quote character that opened the current literal, or 0
 	for i := 0; i < len(text); i++ {
 		ch := text[i]
-		if (ch == '"' || ch == '\'') && prev != '\\' {
-			inString = !inString
-		}
-		if !inString && ch == '+' {
+		switch {
+		case quote != 0 && ch == '\\':
+			i++ // skip the escaped character
+		case quote != 0 && ch == quote:
+			quote = 0
+		case quote == 0 && (ch == '"' || ch == '\'' || ch == '`'):
+			quote = ch
+		case quote == 0 && ch == '+':
 			return true
 		}
-		prev = ch
 	}
 	return false
 }

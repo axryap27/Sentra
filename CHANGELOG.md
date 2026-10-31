@@ -21,6 +21,21 @@ All notable changes to Sentra are documented here. The format follows
 - Diagnostics underline the offending expression and link to the CWE entry.
 - Benchmark harness: `cmd/sentra-bench`, `scripts/bench-daemon.mjs`, `scripts/benchmark.sh`.
 
+### Accuracy (see EVAL.md)
+- New real-world evaluation on a held-out, file-level split of OWASP Benchmark v1.2
+  (981 Java cases): precision 0.486 -> 0.718, recall 0.172 -> 0.776, FPR 0.190 -> 0.319,
+  OWASP score -0.018 -> +0.458.
+- Light intra-procedural taint tracking (user input, parameters, concatenation, constants)
+  and five new dataflow features.
+- Language-scoped sink table with new Java servlet, JDBC/Spring, file and randomness sinks.
+- Deterministic precision gates (weak algorithm literals, constant arguments, `regex.exec`,
+  `free()`, `yaml.load(..., SafeLoader)`, ...).
+- The Random Forest now gates findings with per-rule probability thresholds tuned for
+  F0.5 on out-of-fold train data (Java only), instead of only labeling confidence.
+- Hardcoded-secret detection requires a string literal and understands identifier words
+  and known credential formats (AWS, GitHub, Slack, OpenAI, Google, private keys).
+- Inline suppressions: `sentra-ignore`, `sentra-ignore: rule1, rule2`, `sentra-ignore-file`.
+
 ### Performance
 - Serial analysis of django 5.1 (2,899 files, 501k lines) went from 38.7 s to 8.2 s,
   and the 4-worker workspace scan from 19.0 s to 2.8 s. See BENCHMARKS.md.
@@ -45,6 +60,8 @@ All notable changes to Sentra are documented here. The format follows
   previously ignored; changing `severityLevel` re-filters existing results without a
   rescan; turning `enabled` off clears diagnostics.
 - The analyzer printed `null` instead of `[]` for files with no findings.
+- String-concatenation detection was confused by `'` inside `"..."` strings.
+- The fallback line scanner (removed) flagged words such as "query" in docstrings.
 
 ### Removed
 - Committed build artifacts (`node_modules/`, `out/`, the `.vsix`, and a macOS-only analyzer binary).

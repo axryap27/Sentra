@@ -26,10 +26,18 @@ type Finding struct {
 	Issue      string  `json:"issue"`
 }
 
+// Options configure an Engine.
+type Options struct {
+	// DisableModel reports every candidate that passes the deterministic gates,
+	// ignoring the classifier's thresholds (used for ablations in sentra-eval).
+	DisableModel bool
+}
+
 // Engine analyzes source code. It is safe for concurrent use: the model is
 // loaded once and tree-sitter parsers (which are not thread-safe) are pooled
 // per language.
 type Engine struct {
+	opts    Options
 	clf     *RandomForestClassifier
 	parsers map[Language]*sync.Pool
 	kinds   map[Language][]nodeKind
@@ -40,27 +48,58 @@ var (
 	defaultEngineOnce sync.Once
 )
 
-// Default returns the process-wide engine, loading the embedded model on first use.
+// Default returns the process-wide engine with default options.
 func Default() *Engine {
 	defaultEngineOnce.Do(func() {
-		clf, _ := GetClassifier() // nil classifier falls back to heuristic confidence
-		e := &Engine{clf: clf, parsers: make(map[Language]*sync.Pool, len(grammars)), kinds: make(map[Language][]nodeKind)}
-		for lang, grammar := range grammars {
-			g := grammar
-			e.kinds[lang] = kindTable(g)
-			e.parsers[lang] = &sync.Pool{New: func() any {
-				p := sitter.NewParser()
-				p.SetLanguage(g)
-				return p
-			}}
+		e, err := New(Options{})
+		if err != nil {
+			panic(err) // the embedded model is validated by tests; this is a build error
 		}
 		defaultEngine = e
 	})
 	return defaultEngine
 }
 
-// Analyze scans src written in lang and returns findings sorted by position.
-func (e *Engine) Analyze(lang Language, src []byte) ([]Finding, error) {
+// ModelError reports why the embedded model failed to load (nil if it loaded).
+// Without a model the engine still works, using the deterministic gates alone.
+func ModelError() error {
+	_, err := GetClassifier()
+	return err
+}
+
+// New builds an engine, loading the embedded model.
+func New(opts Options) (*Engine, error) {
+	clf, _ := GetClassifier() // nil-safe; see ModelError
+	e := &Engine{opts: opts, clf: clf, parsers: make(map[Language]*sync.Pool, len(grammars)), kinds: make(map[Language][]nodeKind)}
+	for lang, grammar := range grammars {
+		g := grammar
+		e.kinds[lang] = kindTable(g)
+		e.parsers[lang] = &sync.Pool{New: func() any {
+			p := sitter.NewParser()
+			p.SetLanguage(g)
+			return p
+		}}
+	}
+	return e, nil
+}
+
+// Scored is a candidate that passed the deterministic gates, with its features
+// and the classifier's probability for its rule.
+type Scored struct {
+	Candidate
+	Rule        Rule
+	Features    []float64
+	Probability float64
+	Threshold   float64
+	Sanitized   bool
+}
+
+// Kept reports whether the classifier accepts the candidate.
+func (s *Scored) Kept() bool { return s.Probability >= s.Threshold }
+
+// Score parses src and returns every candidate that matches a sink and passes
+// the deterministic gates, scored by the classifier.
+func (e *Engine) Score(lang Language, src []byte) ([]Scored, error) {
 	pool, ok := e.parsers[lang]
 	if !ok {
 		return nil, fmt.Errorf("unsupported language %q", lang)
@@ -69,159 +108,134 @@ func (e *Engine) Analyze(lang Language, src []byte) ([]Finding, error) {
 	candidates := parseCandidates(p, lang, e.kinds[lang], src)
 	pool.Put(p)
 
-	if len(candidates) == 0 {
-		return fallbackLineScan(src), nil
+	// For the memory-management gate: which functions call free().
+	freeIn := map[string]bool{}
+	for i := range candidates {
+		if candidates[i].Name == "free" {
+			freeIn[candidates[i].ParentFunctionName] = true
+		}
 	}
 
-	findings := make([]Finding, 0, 8)
+	var out []Scored
 	for i := range candidates {
 		c := &candidates[i]
-		fv := ExtractFeatures(c, lang)
-		if fv.IsInComment == 1 {
+		if c.IsInComment {
 			continue
 		}
-		category := fv.DangerousFuncCategory
-		if fv.HasHardcodedSecret == 1 && category == CWENone {
-			category = CWEHardcoded
+		s := matchSink(c.Name, lang)
+		if s != nil && c.AssignedIdentifier != "" && s.cat != CWEXSS {
+			s = nil // assigning to x.query is not calling a sink; only property sinks (innerHTML) apply
 		}
-		if category == CWENone {
+		fv := extractFeatures(c, lang, s)
+		var rule Rule
+		switch {
+		case s != nil:
+			rule = rulesByCategory[s.cat]
+		case fv.HasHardcodedSecret == 1:
+			rule = rulesByCategory[CWEHardcoded]
+			fv.DangerousFuncCategory = CWEHardcoded
+		default:
 			continue
 		}
-		rule := rulesByCategory[category]
-		if shouldFilter(rule.Name, &fv) {
+		if !passesGates(rule, s, c, &fv, freeIn) {
 			continue
 		}
-		confidence := e.confidence(&fv)
+		sc := Scored{Candidate: *c, Rule: rule, Features: fv.ToSlice(), Sanitized: fv.HasSanitizationNearby == 1}
+		sc.Probability = e.clf.Proba(sc.Features, rule.Name)
+		if !e.opts.DisableModel {
+			sc.Threshold = e.clf.Threshold(lang, rule.Name)
+		}
+		out = append(out, sc)
+	}
+	return out, nil
+}
+
+// Analyze scans src written in lang and returns findings sorted by position.
+func (e *Engine) Analyze(lang Language, src []byte) ([]Finding, error) {
+	scored, err := e.Score(lang, src)
+	if err != nil {
+		return nil, err
+	}
+	findings := make([]Finding, 0, len(scored))
+	for i := range scored {
+		s := &scored[i]
+		if !s.Kept() {
+			continue
+		}
+		sev := s.Rule.Severity
+		if s.Sanitized && sev == "High" {
+			sev = "Medium"
+		}
 		findings = append(findings, Finding{
-			Line:       c.Line,
-			Column:     c.Column,
-			EndLine:    c.EndLine,
-			EndColumn:  c.EndColumn,
-			Rule:       rule.Name,
-			CWE:        rule.CWE,
-			Severity:   severity(rule, &fv),
-			Confidence: confidence,
-			Symbol:     c.Name,
-			Issue:      describe(rule, c.Name, confidence),
+			Line: s.Line, Column: s.Column, EndLine: s.EndLine, EndColumn: s.EndColumn,
+			Rule: s.Rule.Name, CWE: s.Rule.CWE, Severity: sev,
+			Confidence: round3(s.Probability), Symbol: s.Name,
+			Issue: describe(s.Rule, s.Name),
 		})
 	}
+	findings = applySuppressions(src, findings)
 	return dedupe(findings), nil
 }
 
-// shouldFilter drops candidates whose context makes them false positives.
-func shouldFilter(rule string, fv *FeatureVector) bool {
-	switch rule {
-	case "path_traversal":
-		return fv.HasUserInputSource == 0 || fv.HasSanitizationNearby == 1
+// passesGates applies deterministic, rule-specific precision checks. They encode
+// facts the model cannot learn from features alone (and keep obviously safe code
+// out of the training data).
+func passesGates(r Rule, s *sink, c *Candidate, fv *FeatureVector, freeIn map[string]bool) bool {
+	var flags sinkFlag
+	if s != nil {
+		flags = s.flags
+	}
+	if flags&stringArg != 0 && !c.FirstArgIsString {
+		return false // setTimeout(fn, ms) is not code injection
+	}
+	if flags&needsWeakAlgo != 0 && fv.WeakAlgorithmArg == 0 {
+		return false // MessageDigest.getInstance("SHA-256")
+	}
+	switch r.Name {
 	case "sql_injection":
-		return fv.HasStringConcatInArgs == 0 && fv.HasFormatString == 0
+		// Only dynamically built queries; parameterized/constant SQL is fine.
+		return fv.ArgBuiltWithConcat == 1 && fv.ArgsConstant == 0
+	case "path_traversal":
+		return (fv.ArgFromUserInput == 1 || fv.HasUserInputSource == 1) && fv.ArgsConstant == 0
+	case "command_injection", "code_injection", "xss":
+		return fv.ArgsConstant == 0 // os.system("clear"), eval("1+1"), innerHTML = "<b>hi</b>"
+	case "unsafe_deserialization":
+		// yaml.load(f, Loader=yaml.SafeLoader); pickle.loads(pickle.dumps(x)) round-trips
+		return !strings.Contains(c.ArgSource, "SafeLoader") && !strings.Contains(c.ArgSource, "dumps(")
+	case "memory_leak":
+		return !freeIn[c.ParentFunctionName]
 	}
-	return false
+	return true
 }
 
-func (e *Engine) confidence(fv *FeatureVector) float64 {
-	if e.clf == nil {
-		conf := 0.7
-		if fv.HasUserInputSource == 1 {
-			conf += 0.1
-		}
-		if fv.HasStringConcatInArgs == 1 {
-			conf += 0.1
-		}
-		if fv.HasSanitizationNearby == 1 {
-			conf -= 0.2
-		}
-		if fv.IsInTryCatch == 1 {
-			conf -= 0.05
-		}
-		return clamp(conf, 0.3, 1)
+func round3(v float64) float64 { return float64(int(v*1000+0.5)) / 1000 }
+
+func describe(r Rule, symbol string) string {
+	if symbol == "" {
+		return r.Message
 	}
-	pred := e.clf.Predict(fv.ToSlice())
-	if pred.ClassIndex == 0 {
-		return 0.3
+	if len(symbol) > 60 {
+		symbol = symbol[:57] + "..."
 	}
-	return pred.Confidence
+	return fmt.Sprintf("%s [%s]", r.Message, symbol)
 }
 
-func clamp(v, lo, hi float64) float64 {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
-}
-
-func severity(r Rule, fv *FeatureVector) string {
-	if fv.HasSanitizationNearby == 1 && r.Severity == "High" {
-		return "Medium"
-	}
-	return r.Severity
-}
-
-func describe(r Rule, symbol string, confidence float64) string {
-	msg := r.Message
-	if symbol != "" {
-		if len(symbol) > 60 {
-			symbol = symbol[:57] + "..."
-		}
-		msg = fmt.Sprintf("%s [%s]", msg, symbol)
-	}
-	switch {
-	case confidence > 0.8:
-		return msg + " (High confidence)"
-	case confidence > 0.6:
-		return msg + " (Medium confidence)"
-	default:
-		return msg + " (Low confidence)"
-	}
-}
-
-// fallbackLineScan is used when tree-sitter yields no candidates.
-func fallbackLineScan(src []byte) []Finding {
-	var findings []Finding
-	for i, line := range strings.Split(string(src), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#") ||
-			strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") {
-			continue
-		}
-		for _, name := range sortedDangerousNames {
-			if !strings.Contains(trimmed, name+"(") && !strings.Contains(trimmed, name+" ") {
-				continue
-			}
-			rule := rulesByCategory[dangerousFunctions[name]]
-			findings = append(findings, Finding{
-				Line: i + 1, Column: 1, EndLine: i + 1, EndColumn: len(line) + 1,
-				Rule: rule.Name, CWE: rule.CWE, Severity: rule.Severity, Confidence: 0.3,
-				Symbol: name, Issue: rule.Message + " [" + name + "]",
-			})
-			break // one finding per line in fallback mode
-		}
-	}
-	return findings
-}
-
-var sortedDangerousNames = func() []string {
-	names := make([]string, 0, len(dangerousFunctions))
-	for n := range dangerousFunctions {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
-}()
-
-// dedupe keeps the first finding per (line, severity).
+// dedupe keeps the first finding per (line, rule) and sorts by position.
 func dedupe(findings []Finding) []Finding {
+	sort.SliceStable(findings, func(i, j int) bool {
+		if findings[i].Line != findings[j].Line {
+			return findings[i].Line < findings[j].Line
+		}
+		return findings[i].Column < findings[j].Column
+	})
 	type key struct {
 		line int
-		sev  string
+		rule string
 	}
 	seen := make(map[key]bool, len(findings))
 	out := findings[:0]
 	for _, f := range findings {
-		k := key{f.Line, f.Severity}
+		k := key{f.Line, f.Rule}
 		if !seen[k] {
 			seen[k] = true
 			out = append(out, f)
