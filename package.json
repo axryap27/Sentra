@@ -75,6 +75,11 @@
         "category": "Sentra"
       },
       {
+        "command": "sentra.exportSarif",
+        "title": "Export Results as SARIF",
+        "category": "Sentra"
+      },
+      {
         "command": "sentra.showLog",
         "title": "Show Log",
         "category": "Sentra"

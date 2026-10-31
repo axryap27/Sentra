@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { FileReport, Severity } from './types';
+import { cweUrl, ruleInfo } from './rules';
+import { FileReport, SEVERITY_RANK, Severity } from './types';
 
 /**
  * Workspace report webview. Scripts are disabled and a strict CSP is set; all
@@ -55,12 +56,14 @@ export function renderReport(reports: FileReport[], cspSource: string): string {
 <section class="file">
   <h2>${escapeHtml(r.fileName)} <span class="muted">(${r.findings.length})</span></h2>
   <ul>
-    ${r.findings
+    ${[...r.findings]
+        .sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || a.line - b.line)
         .map(
             (f) => `<li>
       <a class="line" href="${escapeHtml(openCommand(r.uri, f.line))}">L${f.line}</a>
       <span class="sev sev-${f.severity.toLowerCase()}">${f.severity}</span>
       <span class="msg">${escapeHtml(f.issue)}</span>
+      ${f.cwe ? `<a class="cwe" href="${escapeHtml(cweUrl(f.cwe))}" title="${escapeHtml(ruleInfo(f.rule)?.title ?? f.cwe)}">${escapeHtml(f.cwe)}</a>` : ''}
     </li>`,
         )
         .join('')}
@@ -94,7 +97,8 @@ export function renderReport(reports: FileReport[], cspSource: string): string {
   .sev-high { color: var(--vscode-errorForeground); }
   .sev-medium { color: var(--vscode-editorWarning-foreground); }
   .sev-low { color: var(--vscode-editorInfo-foreground); }
-  .msg { word-break: break-word; }
+  .msg { word-break: break-word; flex: 1; }
+  .cwe { color: var(--vscode-textLink-foreground); font-size: 0.85em; white-space: nowrap; }
   .empty { text-align: center; padding: 48px; color: var(--vscode-descriptionForeground); }
 </style>
 </head>

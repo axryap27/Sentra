@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"sentra-analyzer/internal/engine"
+	"sentra-analyzer/internal/sarif"
 	"sentra-analyzer/internal/server"
 )
 
@@ -29,7 +30,7 @@ func main() {
 	lang := flag.String("lang", "", "language of the source (python, javascript, ...); inferred from --file if empty")
 	batch := flag.Bool("batch", false, "read file paths from stdin and analyze them in parallel")
 	serve := flag.Bool("serve", false, "run as a daemon speaking newline-delimited JSON over stdio")
-	format := flag.String("format", "json", "output format: json or text")
+	format := flag.String("format", "json", "output format: json, text, or sarif")
 	workers := flag.Int("workers", runtime.NumCPU(), "parallel workers for --batch and --serve")
 	version := flag.Bool("version", false, "print the engine version")
 	flag.Parse()
@@ -147,10 +148,16 @@ func runBatch(workers int, format string) error {
 	for r := range results {
 		all[r.path] = r.findings
 	}
-	if format == "json" {
+	switch format {
+	case "json":
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(all)
+	case "sarif":
+		cwd, _ := os.Getwd()
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(sarif.Log(all, cwd))
 	}
 	for path, findings := range all {
 		fmt.Printf("\n=== %s ===\n", path)
@@ -160,6 +167,9 @@ func runBatch(workers int, format string) error {
 }
 
 func output(findings []engine.Finding, format string) error {
+	if format == "sarif" {
+		return fmt.Errorf("--format sarif requires --batch")
+	}
 	if format == "json" {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")

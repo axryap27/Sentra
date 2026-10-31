@@ -20,6 +20,14 @@ All notable changes to Sentra are documented here. The format follows
 - Workspace rescans skip files whose mtime and size are unchanged, without reading them.
 - Diagnostics underline the offending expression and link to the CWE entry.
 - Benchmark harness: `cmd/sentra-bench`, `scripts/bench-daemon.mjs`, `scripts/benchmark.sh`.
+- Quick fixes: md5/sha1 -> sha256 (Python, Java, Node), `shell=True` -> `shlex.split(...)`
+  without a shell, `yaml.load` -> `yaml.safe_load`, `Math.random()` ->
+  `crypto.getRandomValues`, `strcpy`/`strcat`/`sprintf`/`gets` -> bounded variants, and
+  "suppress on this line" for every finding.
+- Hovers explain each finding: rule, CWE link, severity, model confidence, remediation.
+- `Sentra: Export Results as SARIF` and `sentra-analyzer --batch --format sarif` produce
+  SARIF 2.1.0 for GitHub code scanning (with `security-severity`).
+- The report sorts by severity and links each finding's CWE.
 
 ### Accuracy (see EVAL.md)
 - New real-world evaluation on a held-out, file-level split of OWASP Benchmark v1.2

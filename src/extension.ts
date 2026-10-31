@@ -2,8 +2,11 @@ import * as vscode from 'vscode';
 import { AnalyzerError, findAnalyzerBinary } from './analyzerBinary';
 import { DaemonClient } from './analyzerClient';
 import { CONFIG_SECTION, getConfig } from './config';
+import { SentraHover } from './hover';
+import { SentraCodeActions } from './quickFixes';
 import { ReportPanel } from './reportPanel';
 import { ResultCache } from './resultCache';
+import { toSarif } from './sarif';
 import { Analyzer, Scanner } from './scanner';
 import { SentraStatusBar } from './statusBar';
 
@@ -121,8 +124,51 @@ export function activate(context: vscode.ExtensionContext): void {
                 );
             }
         }),
+        vscode.commands.registerCommand('sentra.exportSarif', async () => {
+            const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+            if (!root) {
+                vscode.window.showWarningMessage('Sentra: open a folder to export SARIF.');
+                return;
+            }
+            const target = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.joinPath(root, 'sentra.sarif'),
+                filters: { SARIF: ['sarif', 'json'] },
+            });
+            if (!target) {
+                return;
+            }
+            await vscode.window.withProgress(
+                {
+                    location: vscode.ProgressLocation.Notification,
+                    title: 'Sentra: scanning for SARIF export',
+                },
+                () => scanner.scanWorkspace(),
+            );
+            const files = [...scanner.allFindings()].map(([uri, findings]) => ({
+                relativePath: vscode.workspace
+                    .asRelativePath(vscode.Uri.parse(uri), false)
+                    .replace(/\\/g, '/'),
+                findings,
+            }));
+            const sarif = toSarif(files, engineVersion);
+            await vscode.workspace.fs.writeFile(
+                target,
+                Buffer.from(JSON.stringify(sarif, null, 2)),
+            );
+            const count = files.reduce((n, f) => n + f.findings.length, 0);
+            vscode.window.showInformationMessage(
+                `Sentra: wrote ${count} result${count === 1 ? '' : 's'} to ${vscode.workspace.asRelativePath(target)}.`,
+            );
+        }),
         vscode.commands.registerCommand('sentra.clearDiagnostics', () => scanner.clear()),
         vscode.commands.registerCommand('sentra.showLog', () => log.show()),
+        vscode.languages.registerCodeActionsProvider({ scheme: 'file' }, new SentraCodeActions(), {
+            providedCodeActionKinds: SentraCodeActions.kinds,
+        }),
+        vscode.languages.registerHoverProvider(
+            { scheme: 'file' },
+            new SentraHover((uri) => scanner.getFindings(uri)),
+        ),
         vscode.workspace.onDidOpenTextDocument(autoScan),
         vscode.workspace.onDidSaveTextDocument(autoScan),
         vscode.workspace.onDidChangeTextDocument(onType),

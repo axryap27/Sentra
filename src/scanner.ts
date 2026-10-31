@@ -243,6 +243,29 @@ export class Scanner implements vscode.Disposable {
         this.refreshStatus();
     }
 
+    /** Visible (severity-filtered) findings for a URI, for hovers. */
+    getFindings(uri: vscode.Uri): Finding[] {
+        return filterBySeverity(
+            this.findings.get(uri.toString()) ?? [],
+            getConfig(uri).severityLevel,
+        );
+    }
+
+    /** All visible findings, keyed by URI string, for SARIF export. */
+    allFindings(): Map<string, Finding[]> {
+        const out = new Map<string, Finding[]>();
+        for (const [key, findings] of this.findings) {
+            const visible = filterBySeverity(
+                findings,
+                getConfig(vscode.Uri.parse(key)).severityLevel,
+            );
+            if (visible.length) {
+                out.set(key, visible);
+            }
+        }
+        return out;
+    }
+
     getLastReport(): FileReport[] | undefined {
         return this.lastReport;
     }
@@ -292,7 +315,8 @@ function toDiagnostic(f: Finding): vscode.Diagnostic {
     const d = new vscode.Diagnostic(range, f.issue, severity);
     d.source = 'Sentra';
     if (f.rule) {
-        d.code = f.cwe ? { value: `${f.rule} (${f.cwe})`, target: cweUri(f.cwe) } : f.rule;
+        // The rule ID is the code (quick fixes read it); it links to the CWE entry.
+        d.code = f.cwe ? { value: f.rule, target: cweUri(f.cwe) } : f.rule;
     }
     return d;
 }
