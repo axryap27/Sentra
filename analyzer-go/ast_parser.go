@@ -24,19 +24,19 @@ type CandidateNode struct {
 	NodeType string // tree-sitter node type (e.g. "call_expression")
 
 	// Context extracted from the AST
-	ArgCount            int
-	HasStringConcatArg  bool
-	ParentFunctionName  string
-	IsInComment         bool
-	IsInTryCatch        bool
-	IsInConditional     bool
-	IsInLoop            bool
-	IsPublicFunction    bool
-	NodeDepth           int
-	RawLine             string // the original source line for fallback heuristics
-	ArgSource           string // raw text of argument list
-	AssignedIdentifier  string // for assignments: the variable name on the left side
-	AssignedValue       string // for assignments: the raw value on the right side
+	ArgCount           int
+	HasStringConcatArg bool
+	ParentFunctionName string
+	IsInComment        bool
+	IsInTryCatch       bool
+	IsInConditional    bool
+	IsInLoop           bool
+	IsPublicFunction   bool
+	NodeDepth          int
+	RawLine            string // the original source line for fallback heuristics
+	ArgSource          string // raw text of argument list
+	AssignedIdentifier string // for assignments: the variable name on the left side
+	AssignedValue      string // for assignments: the raw value on the right side
 }
 
 // ASTParser wraps tree-sitter to parse source and extract candidate nodes.

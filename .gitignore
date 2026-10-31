@@ -1,5 +1,27 @@
+# Node / extension build output
+node_modules/
+out/
+dist/
+*.vsix
+.vscode-test/
+coverage/
+
+# Go analyzer binaries (built per platform in CI, see PUBLISHING.md)
+bin/
+analyzer-go/sentra-analyzer
+analyzer-go/sentra-analyzer.exe
+
+# Python
 .venv/
 __pycache__/
-.env
 *.pyc
+
+# Local data / secrets
+.env
 *.sqlite3
+analyzer-go/training/.cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp

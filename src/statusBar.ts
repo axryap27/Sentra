@@ -6,7 +6,7 @@ export class SecurityStatusBar {
 
     constructor() {
         this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-        this.statusBarItem.command = 'secureCodeAnalyzer.scanWorkspace';
+        this.statusBarItem.command = 'sentra.scanWorkspace';
         this.updateStatusBar();
         this.statusBarItem.show();
     }

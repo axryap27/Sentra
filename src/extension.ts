@@ -17,7 +17,7 @@ export function activate(context: vscode.ExtensionContext) {
     reportPanel = new SecurityReportPanel(context);
 
     // Register commands
-    const scanFileCommand = vscode.commands.registerCommand('secureCodeAnalyzer.scanFile', async (uri?: vscode.Uri) => {
+    const scanFileCommand = vscode.commands.registerCommand('sentra.scanFile', async (uri?: vscode.Uri) => {
         const targetUri = uri || vscode.window.activeTextEditor?.document.uri;
         if (targetUri) {
             await analyzer.scanFile(targetUri);
@@ -26,7 +26,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    const scanWorkspaceCommand = vscode.commands.registerCommand('secureCodeAnalyzer.scanWorkspace', async () => {
+    const scanWorkspaceCommand = vscode.commands.registerCommand('sentra.scanWorkspace', async () => {
         const reports = await analyzer.scanWorkspace();
         if (reports) {
             reportPanel.showReport(reports);
@@ -35,7 +35,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    const showReportCommand = vscode.commands.registerCommand('secureCodeAnalyzer.showReport', async () => {
+    const showReportCommand = vscode.commands.registerCommand('sentra.showReport', async () => {
         const reports = await analyzer.getLastWorkspaceReport();
         if (reports) {
             reportPanel.showReport(reports);
@@ -44,13 +44,13 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    const clearDiagnosticsCommand = vscode.commands.registerCommand('secureCodeAnalyzer.clearDiagnostics', () => {
+    const clearDiagnosticsCommand = vscode.commands.registerCommand('sentra.clearDiagnostics', () => {
         analyzer.clearAllDiagnostics();
     });
 
     // Register file save listener for auto-scan
     const onSaveDisposable = vscode.workspace.onDidSaveTextDocument(async (document) => {
-        const config = vscode.workspace.getConfiguration('secureCodeAnalyzer');
+        const config = vscode.workspace.getConfiguration('sentra');
         const supportedLanguages = ['python', 'javascript', 'typescript', 'java', 'c', 'cpp', 'go', 'php', 'csharp', 'rust'];
         if (config.get('autoScan') && config.get('enabled') && supportedLanguages.includes(document.languageId)) {
             await analyzer.scanFile(document.uri);
@@ -59,7 +59,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Register file open listener
     const onOpenDisposable = vscode.workspace.onDidOpenTextDocument(async (document) => {
-        const config = vscode.workspace.getConfiguration('secureCodeAnalyzer');
+        const config = vscode.workspace.getConfiguration('sentra');
         const supportedLanguages = ['python', 'javascript', 'typescript', 'java', 'c', 'cpp', 'go', 'php', 'csharp', 'rust'];
         if (config.get('enabled') && supportedLanguages.includes(document.languageId)) {
             await analyzer.scanFile(document.uri);

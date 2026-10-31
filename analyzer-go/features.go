@@ -7,21 +7,21 @@ import (
 // FeatureVector holds the numeric features fed into the ML classifier.
 // Each field maps to an index in the float64 slice returned by ToSlice().
 type FeatureVector struct {
-	DangerousFuncCategory  float64 // 0: CWE category (0=none,1=injection,2=xss,3=overflow,4=crypto,5=deser,6=secrets,7=cmdinj,8=pathtraversal,9=memleak,10=weakrand)
-	ArgCount               float64 // 1
-	HasStringConcatInArgs  float64 // 2: 1.0 or 0.0
-	HasUserInputSource     float64 // 3
-	IsInComment            float64 // 4
-	IsInTryCatch           float64 // 5
-	IsInConditional        float64 // 6
-	HasSanitizationNearby  float64 // 7
-	NodeDepth              float64 // 8
-	IsInLoop               float64 // 9
-	HasFormatString        float64 // 10
-	IsPublicFunction       float64 // 11
-	UsesWeakCrypto         float64 // 12
-	HasHardcodedSecret     float64 // 13
-	LanguageID             float64 // 14
+	DangerousFuncCategory float64 // 0: CWE category (0=none,1=injection,2=xss,3=overflow,4=crypto,5=deser,6=secrets,7=cmdinj,8=pathtraversal,9=memleak,10=weakrand)
+	ArgCount              float64 // 1
+	HasStringConcatInArgs float64 // 2: 1.0 or 0.0
+	HasUserInputSource    float64 // 3
+	IsInComment           float64 // 4
+	IsInTryCatch          float64 // 5
+	IsInConditional       float64 // 6
+	HasSanitizationNearby float64 // 7
+	NodeDepth             float64 // 8
+	IsInLoop              float64 // 9
+	HasFormatString       float64 // 10
+	IsPublicFunction      float64 // 11
+	UsesWeakCrypto        float64 // 12
+	HasHardcodedSecret    float64 // 13
+	LanguageID            float64 // 14
 }
 
 const NumFeatures = 15
@@ -71,17 +71,17 @@ var dangerousFunctions = map[string]float64{
 	"Function": CWECodeInject,
 
 	// XSS (CWE-79)
-	"innerHTML":              CWEXSS,
+	"innerHTML":               CWEXSS,
 	"dangerouslySetInnerHTML": CWEXSS,
-	"document.write":         CWEXSS,
+	"document.write":          CWEXSS,
 
 	// Buffer overflow (CWE-120)
-	"strcpy":  CWEBufferOvfl,
-	"strcat":  CWEBufferOvfl,
-	"sprintf": CWEBufferOvfl,
-	"gets":    CWEBufferOvfl,
-	"scanf":   CWEBufferOvfl,
-	"memcpy":  CWEBufferOvfl,
+	"strcpy":   CWEBufferOvfl,
+	"strcat":   CWEBufferOvfl,
+	"sprintf":  CWEBufferOvfl,
+	"gets":     CWEBufferOvfl,
+	"scanf":    CWEBufferOvfl,
+	"memcpy":   CWEBufferOvfl,
 	"vsprintf": CWEBufferOvfl,
 
 	// Weak crypto (CWE-327)
@@ -90,40 +90,40 @@ var dangerousFunctions = map[string]float64{
 	"MessageDigest.getInstance": CWEWeakCrypto,
 
 	// Unsafe deserialization (CWE-502)
-	"pickle.load":      CWEDeserial,
-	"pickle.loads":     CWEDeserial,
-	"yaml.load":        CWEDeserial,
+	"pickle.load":       CWEDeserial,
+	"pickle.loads":      CWEDeserial,
+	"yaml.load":         CWEDeserial,
 	"ObjectInputStream": CWEDeserial,
-	"unserialize":      CWEDeserial,
-	"Marshal.load":     CWEDeserial,
+	"unserialize":       CWEDeserial,
+	"Marshal.load":      CWEDeserial,
 
 	// Command injection (CWE-78)
-	"system":                      CWECmdInject,
-	"popen":                       CWECmdInject,
-	"os.system":                   CWECmdInject,
-	"os.popen":                    CWECmdInject,
-	"subprocess.call":             CWECmdInject,
-	"subprocess.Popen":            CWECmdInject,
-	"subprocess.run":              CWECmdInject,
-	"Runtime.getRuntime().exec":   CWECmdInject,
-	"ProcessBuilder":              CWECmdInject,
-	"child_process.exec":          CWECmdInject,
+	"system":                    CWECmdInject,
+	"popen":                     CWECmdInject,
+	"os.system":                 CWECmdInject,
+	"os.popen":                  CWECmdInject,
+	"subprocess.call":           CWECmdInject,
+	"subprocess.Popen":          CWECmdInject,
+	"subprocess.run":            CWECmdInject,
+	"Runtime.getRuntime().exec": CWECmdInject,
+	"ProcessBuilder":            CWECmdInject,
+	"child_process.exec":        CWECmdInject,
 
 	// Memory management (CWE-401)
-	"malloc": CWEMemLeak,
-	"calloc": CWEMemLeak,
+	"malloc":  CWEMemLeak,
+	"calloc":  CWEMemLeak,
 	"realloc": CWEMemLeak,
-	"free":   CWEMemLeak,
+	"free":    CWEMemLeak,
 
 	// Weak randomness (CWE-330)
-	"Math.random": CWEWeakRand,
+	"Math.random":   CWEWeakRand,
 	"random.random": CWEWeakRand,
-	"rand":        CWEWeakRand,
+	"rand":          CWEWeakRand,
 
 	// SQL queries (CWE-89) – flagged only when concat detected
-	"execute":     CWESQLInject,
+	"execute":      CWESQLInject,
 	"executeQuery": CWESQLInject,
-	"query":       CWESQLInject,
+	"query":        CWESQLInject,
 
 	// Path operations (CWE-22)
 	"open": CWEPathTraverse,

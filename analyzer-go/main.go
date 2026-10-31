@@ -61,12 +61,12 @@ func (a *Analyzer) addIssue(pos token.Pos, issue, severity string) {
 func (a *Analyzer) analyzeFile(content string) error {
 	// Use AI-powered analysis with language-specific patterns
 	aiAnalyzer := NewAIAnalyzer(a.language)
-	
+
 	aiIssues, err := aiAnalyzer.AnalyzeWithAI(content)
 	if err != nil {
 		return fmt.Errorf("AI analysis failed: %v", err)
 	}
-	
+
 	a.issues = aiIssues
 	return nil
 }
@@ -101,7 +101,7 @@ func processSingleFile(filePath, format string) {
 
 	// Detect language from file path
 	language := detectLanguage(filePath)
-	
+
 	analyzer := NewAnalyzer(language)
 	err = analyzer.analyzeFile(string(content))
 	if err != nil {
@@ -113,22 +113,22 @@ func processSingleFile(filePath, format string) {
 }
 
 type FileJob struct {
-	Path string
-	Content string
+	Path     string
+	Content  string
 	Language Language
 }
 
 type FileResult struct {
-	Path string
+	Path   string
 	Issues []SecurityIssue
-	Error error
+	Error  error
 }
 
 func processBatch(workers int, format string) {
-	
+
 	jobs := make(chan FileJob, workers*2)
 	results := make(chan FileResult, workers*2)
-	
+
 	// Start worker goroutines
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
@@ -138,17 +138,17 @@ func processBatch(workers int, format string) {
 			for job := range jobs {
 				analyzer := NewAnalyzer(job.Language)
 				err := analyzer.analyzeFile(job.Content)
-				
+
 				result := FileResult{
-					Path: job.Path,
+					Path:   job.Path,
 					Issues: analyzer.getIssues(),
-					Error: err,
+					Error:  err,
 				}
 				results <- result
 			}
 		}()
 	}
-	
+
 	// Read file paths from stdin and send jobs
 	go func() {
 		defer close(jobs)
@@ -158,28 +158,28 @@ func processBatch(workers int, format string) {
 			if filePath == "" {
 				continue
 			}
-			
+
 			content, err := os.ReadFile(filePath)
 			if err != nil {
 				results <- FileResult{Path: filePath, Error: err}
 				continue
 			}
-			
+
 			language := detectLanguage(filePath)
 			jobs <- FileJob{
-				Path: filePath,
-				Content: string(content),
+				Path:     filePath,
+				Content:  string(content),
 				Language: language,
 			}
 		}
 	}()
-	
+
 	// Close results channel when all workers are done
 	go func() {
 		wg.Wait()
 		close(results)
 	}()
-	
+
 	// Collect and output results
 	allResults := make(map[string][]SecurityIssue)
 	for result := range results {
@@ -189,7 +189,7 @@ func processBatch(workers int, format string) {
 		}
 		allResults[result.Path] = result.Issues
 	}
-	
+
 	if format == "json" {
 		jsonOutput, err := json.MarshalIndent(allResults, "", "  ")
 		if err != nil {
@@ -231,7 +231,7 @@ func outputResults(issues []SecurityIssue, format string) {
 // detectLanguage determines the programming language from file extension
 func detectLanguage(filePath string) Language {
 	ext := strings.ToLower(filepath.Ext(filePath))
-	
+
 	switch ext {
 	case ".py":
 		return LanguagePython

@@ -15,17 +15,17 @@ type AIAnalyzer struct {
 
 // CWE descriptions map class names to human-readable issue descriptions.
 var cweDescriptions = map[string]string{
-	"code_injection":          "Code injection vulnerability: executes arbitrary code",
-	"xss":                     "XSS vulnerability: user-controlled content rendered without escaping",
-	"buffer_overflow":         "Buffer overflow vulnerability: unsafe memory operation without bounds checking",
-	"weak_crypto":             "Cryptographic weakness: broken or deprecated algorithm",
-	"unsafe_deserialization":  "Unsafe deserialization: can execute arbitrary code from untrusted data",
-	"hardcoded_secret":        "Hardcoded secret detected: potential credential leak",
-	"command_injection":       "Command injection vulnerability: executes shell commands",
-	"path_traversal":          "Path traversal vulnerability: user-controlled file access",
-	"memory_leak":             "Memory management risk: potential memory leak or unsafe operation",
-	"weak_randomness":         "Weak randomness: not cryptographically secure",
-	"sql_injection":           "SQL injection vulnerability: dynamic query construction detected",
+	"code_injection":         "Code injection vulnerability: executes arbitrary code",
+	"xss":                    "XSS vulnerability: user-controlled content rendered without escaping",
+	"buffer_overflow":        "Buffer overflow vulnerability: unsafe memory operation without bounds checking",
+	"weak_crypto":            "Cryptographic weakness: broken or deprecated algorithm",
+	"unsafe_deserialization": "Unsafe deserialization: can execute arbitrary code from untrusted data",
+	"hardcoded_secret":       "Hardcoded secret detected: potential credential leak",
+	"command_injection":      "Command injection vulnerability: executes shell commands",
+	"path_traversal":         "Path traversal vulnerability: user-controlled file access",
+	"memory_leak":            "Memory management risk: potential memory leak or unsafe operation",
+	"weak_randomness":        "Weak randomness: not cryptographically secure",
+	"sql_injection":          "SQL injection vulnerability: dynamic query construction detected",
 }
 
 func NewAIAnalyzer(language Language) *AIAnalyzer {
