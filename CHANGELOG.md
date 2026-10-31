@@ -6,6 +6,8 @@ All notable changes to Sentra are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-31
+
 ### Changed
 - **Breaking:** command and setting IDs renamed from `secureCodeAnalyzer.*` to `sentra.*`.
   Re-apply any customized settings under the new names.
