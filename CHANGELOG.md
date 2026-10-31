@@ -29,6 +29,12 @@ All notable changes to Sentra are documented here. The format follows
   SARIF 2.1.0 for GitHub code scanning (with `security-severity`).
 - The report sorts by severity and links each finding's CWE.
 
+### Packaging
+- Platform-specific VSIX files for linux-x64, linux-arm64, win32-x64, darwin-arm64 and
+  darwin-x64, each with a prebuilt analyzer (static musl binaries on Linux).
+- GitHub Actions: CI on pull requests; tagged releases build, smoke-test on each OS,
+  package and publish to the VS Code Marketplace and Open VSX. See PUBLISHING.md.
+
 ### Accuracy (see EVAL.md)
 - New real-world evaluation on a held-out, file-level split of OWASP Benchmark v1.2
   (981 Java cases): precision 0.486 -> 0.718, recall 0.172 -> 0.776, FPR 0.190 -> 0.319,

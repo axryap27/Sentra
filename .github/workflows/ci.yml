@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go (lint, vet, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: analyzer-go/go.mod
+          cache-dependency-path: analyzer-go/go.sum
+      - name: gofmt
+        run: make go-fmt-check
+      - name: go vet
+        run: make go-vet
+      - name: go test
+        run: cd analyzer-go && go test -race ./...
+      - name: Model is reproducible from committed training data
+        run: |
+          pip install -r analyzer-go/training/requirements.txt
+          cd analyzer-go
+          python training/generate_dataset.py
+          python training/train_model.py
+          git diff --exit-code -- internal/engine/model.json training/training_data.json
+
+  extension:
+    name: Extension (lint, typecheck, unit + integration tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: analyzer-go/go.mod
+          cache-dependency-path: analyzer-go/go.sum
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Build analyzer for the integration tests
+        run: make go-build
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Integration tests (VS Code + real analyzer)
+        run: xvfb-run -a npm run test:integration

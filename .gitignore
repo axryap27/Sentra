@@ -28,3 +28,4 @@ Thumbs.db
 
 # Benchmark corpora
 .bench/
+dist-vsix/

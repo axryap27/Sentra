@@ -1,0 +1,138 @@
+name: Release
+
+# Push a tag like v0.3.0 to build every platform, test, package and publish.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish to the Marketplace and Open VSX
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # create the GitHub release
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # zig cc cross-compiles the cgo/tree-sitter code for Linux (static musl) and Windows.
+          - { target: linux-x64, os: ubuntu-latest }
+          - { target: linux-arm64, os: ubuntu-latest }
+          - { target: win32-x64, os: ubuntu-latest }
+          # Mach-O linking needs the macOS SDK, so darwin builds use Apple clang on macOS.
+          - { target: darwin-arm64, os: macos-14 }
+          - { target: darwin-x64, os: macos-14 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: analyzer-go/go.mod
+          cache-dependency-path: analyzer-go/go.sum
+      - name: Install zig
+        if: runner.os == 'Linux'
+        run: pip install ziglang==0.13.0
+      - run: scripts/build-analyzer.sh ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: analyzer-${{ matrix.target }}
+          path: bin/${{ matrix.target }}
+          if-no-files-found: error
+
+  smoke-test:
+    name: Smoke test ${{ matrix.target }}
+    needs: build
+    strategy:
+      matrix:
+        include:
+          - { target: linux-x64, os: ubuntu-latest, exe: sentra-analyzer }
+          - { target: linux-arm64, os: ubuntu-24.04-arm, exe: sentra-analyzer }
+          - { target: win32-x64, os: windows-latest, exe: sentra-analyzer.exe }
+          - { target: darwin-arm64, os: macos-14, exe: sentra-analyzer }
+          - { target: darwin-x64, os: macos-13, exe: sentra-analyzer }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: analyzer-${{ matrix.target }}
+          path: bin/${{ matrix.target }}
+      - name: Analyze the test fixtures and run the daemon
+        run: |
+          BIN=bin/${{ matrix.target }}/${{ matrix.exe }}
+          chmod +x "$BIN"
+          "$BIN" --version
+          out=$("$BIN" --file test_files/vulnerable_python.py)
+          echo "$out"
+          echo "$out" | grep -q '"rule": "command_injection"'
+          echo '{"id":1,"method":"version"}' | "$BIN" --serve | grep -q '"version"'
+
+  package:
+    name: Package VSIX files
+    needs: smoke-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: analyzer-*
+          path: artifacts
+      - name: Package one VSIX per platform
+        run: |
+          for dir in artifacts/analyzer-*; do
+            t="${dir#artifacts/analyzer-}"
+            mkdir -p "binaries/$t" && cp -R "$dir/." "binaries/$t/"
+            scripts/package.sh "$t" binaries
+          done
+          ls -la dist-vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: dist-vsix/*.vsix
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    runs-on: ubuntu-latest
+    environment: marketplace # optional: add required reviewers in repo settings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsix
+          path: dist-vsix
+      - name: Publish to the VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx vsce publish --packagePath dist-vsix/*.vsix
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          for f in dist-vsix/*.vsix; do npx ovsx publish "$f" -p "$OVSX_PAT"; done
+      - name: GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist-vsix/*.vsix --title "$GITHUB_REF_NAME" --notes-file CHANGELOG.md
