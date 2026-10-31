@@ -1,3 +1,11 @@
+// Command sentra-analyzer scans source files for security vulnerabilities.
+//
+// Modes:
+//
+//	--file PATH            analyze one file from disk
+//	--stdin --lang LANG    analyze source read from stdin
+//	--batch                read file paths from stdin (one per line), analyze in parallel
+//	--serve                long-lived daemon speaking newline-delimited JSON on stdio
 package main
 
 import (
@@ -5,255 +13,185 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"go/token"
-	"log"
+	"io"
 	"os"
-	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+
+	"sentra-analyzer/internal/engine"
+	"sentra-analyzer/internal/sarif"
+	"sentra-analyzer/internal/server"
 )
-
-type SecurityIssue struct {
-	Line     int    `json:"line"`
-	Issue    string `json:"issue"`
-	Severity string `json:"severity"`
-}
-
-type Language string
-
-const (
-	LanguagePython     Language = "python"
-	LanguageJavaScript Language = "javascript"
-	LanguageTypeScript Language = "typescript"
-	LanguageJava       Language = "java"
-	LanguageC          Language = "c"
-	LanguageCPP        Language = "cpp"
-	LanguageGo         Language = "go"
-	LanguagePHP        Language = "php"
-	LanguageCSharp     Language = "csharp"
-	LanguageRust       Language = "rust"
-	LanguageUnknown    Language = "unknown"
-)
-
-type Analyzer struct {
-	fileSet  *token.FileSet
-	issues   []SecurityIssue
-	language Language
-}
-
-func NewAnalyzer(language Language) *Analyzer {
-	return &Analyzer{
-		fileSet:  token.NewFileSet(),
-		issues:   make([]SecurityIssue, 0),
-		language: language,
-	}
-}
-
-func (a *Analyzer) addIssue(pos token.Pos, issue, severity string) {
-	position := a.fileSet.Position(pos)
-	a.issues = append(a.issues, SecurityIssue{
-		Line:     position.Line,
-		Issue:    issue,
-		Severity: severity,
-	})
-}
-
-func (a *Analyzer) analyzeFile(content string) error {
-	// Use AI-powered analysis with language-specific patterns
-	aiAnalyzer := NewAIAnalyzer(a.language)
-	
-	aiIssues, err := aiAnalyzer.AnalyzeWithAI(content)
-	if err != nil {
-		return fmt.Errorf("AI analysis failed: %v", err)
-	}
-	
-	a.issues = aiIssues
-	return nil
-}
-
-func (a *Analyzer) getIssues() []SecurityIssue {
-	return a.issues
-}
 
 func main() {
-	var filePath = flag.String("file", "", "File to analyze")
-	var batchMode = flag.Bool("batch", false, "Batch mode: read file paths from stdin")
-	var format = flag.String("format", "json", "Output format (json or text)")
-	var workers = flag.Int("workers", 4, "Number of worker goroutines for batch processing")
+	filePath := flag.String("file", "", "file to analyze (with --stdin: only a hint for language detection)")
+	useStdin := flag.Bool("stdin", false, "read source from stdin")
+	lang := flag.String("lang", "", "language of the source (python, javascript, ...); inferred from --file if empty")
+	batch := flag.Bool("batch", false, "read file paths from stdin and analyze them in parallel")
+	serve := flag.Bool("serve", false, "run as a daemon speaking newline-delimited JSON over stdio")
+	format := flag.String("format", "json", "output format: json, text, or sarif")
+	workers := flag.Int("workers", runtime.NumCPU(), "parallel workers for --batch and --serve")
+	version := flag.Bool("version", false, "print the engine version")
 	flag.Parse()
 
-	if *batchMode {
-		processBatch(*workers, *format)
-	} else {
-		if *filePath == "" {
-			fmt.Fprintf(os.Stderr, "Error: --file parameter is required\n")
-			os.Exit(1)
-		}
-		processSingleFile(*filePath, *format)
+	var err error
+	switch {
+	case *version:
+		fmt.Println(engine.Version)
+	case *serve:
+		err = server.New(engine.Default(), *workers).Serve(os.Stdin, os.Stdout)
+	case *batch:
+		err = runBatch(*workers, *format)
+	case *useStdin:
+		err = runStdin(*lang, *filePath, *format)
+	case *filePath != "":
+		err = runFile(*filePath, *format)
+	default:
+		flag.Usage()
+		os.Exit(2)
 	}
-}
-
-func processSingleFile(filePath, format string) {
-	content, err := os.ReadFile(filePath)
 	if err != nil {
-		log.Fatalf("Error reading file: %v", err)
+		fmt.Fprintln(os.Stderr, "sentra-analyzer:", err)
+		os.Exit(1)
 	}
+}
 
-	// Detect language from file path
-	language := detectLanguage(filePath)
-	
-	analyzer := NewAnalyzer(language)
-	err = analyzer.analyzeFile(string(content))
+func resolveLang(lang, path string) (engine.Language, error) {
+	l := engine.Language(lang)
+	if lang == "" {
+		l = engine.DetectLanguage(path)
+	}
+	if !l.Valid() {
+		return "", fmt.Errorf("unsupported language %q", string(l))
+	}
+	return l, nil
+}
+
+func runStdin(lang, pathHint, format string) error {
+	l, err := resolveLang(lang, pathHint)
 	if err != nil {
-		log.Fatalf("Analysis error: %v", err)
+		return err
 	}
-
-	issues := analyzer.getIssues()
-	outputResults(issues, format)
+	src, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return fmt.Errorf("reading stdin: %w", err)
+	}
+	findings, err := engine.Default().Analyze(l, src)
+	if err != nil {
+		return err
+	}
+	return output(findings, format)
 }
 
-type FileJob struct {
-	Path string
-	Content string
-	Language Language
+func runFile(path, format string) error {
+	l, err := resolveLang("", path)
+	if err != nil {
+		return err
+	}
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	findings, err := engine.Default().Analyze(l, src)
+	if err != nil {
+		return err
+	}
+	return output(findings, format)
 }
 
-type FileResult struct {
-	Path string
-	Issues []SecurityIssue
-	Error error
-}
+func runBatch(workers int, format string) error {
+	paths := make(chan string, workers*2)
+	type result struct {
+		path     string
+		findings []engine.Finding
+	}
+	results := make(chan result, workers*2)
 
-func processBatch(workers int, format string) {
-	
-	jobs := make(chan FileJob, workers*2)
-	results := make(chan FileResult, workers*2)
-	
-	// Start worker goroutines
 	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
+	for i := 0; i < max(1, workers); i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for job := range jobs {
-				analyzer := NewAnalyzer(job.Language)
-				err := analyzer.analyzeFile(job.Content)
-				
-				result := FileResult{
-					Path: job.Path,
-					Issues: analyzer.getIssues(),
-					Error: err,
+			for p := range paths {
+				l := engine.DetectLanguage(p)
+				src, err := os.ReadFile(p)
+				if err == nil && !l.Valid() {
+					err = fmt.Errorf("unsupported language")
 				}
-				results <- result
+				var findings []engine.Finding
+				if err == nil {
+					findings, err = engine.Default().Analyze(l, src)
+				}
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "error processing %s: %v\n", p, err)
+					continue
+				}
+				results <- result{p, nonNil(findings)}
 			}
 		}()
 	}
-	
-	// Read file paths from stdin and send jobs
 	go func() {
-		defer close(jobs)
-		scanner := bufio.NewScanner(os.Stdin)
-		for scanner.Scan() {
-			filePath := strings.TrimSpace(scanner.Text())
-			if filePath == "" {
-				continue
-			}
-			
-			content, err := os.ReadFile(filePath)
-			if err != nil {
-				results <- FileResult{Path: filePath, Error: err}
-				continue
-			}
-			
-			language := detectLanguage(filePath)
-			jobs <- FileJob{
-				Path: filePath,
-				Content: string(content),
-				Language: language,
+		sc := bufio.NewScanner(os.Stdin)
+		sc.Buffer(make([]byte, 64*1024), 1<<20)
+		for sc.Scan() {
+			if p := strings.TrimSpace(sc.Text()); p != "" {
+				paths <- p
 			}
 		}
-	}()
-	
-	// Close results channel when all workers are done
-	go func() {
+		close(paths)
 		wg.Wait()
 		close(results)
 	}()
-	
-	// Collect and output results
-	allResults := make(map[string][]SecurityIssue)
-	for result := range results {
-		if result.Error != nil {
-			fmt.Fprintf(os.Stderr, "Error processing %s: %v\n", result.Path, result.Error)
-			continue
-		}
-		allResults[result.Path] = result.Issues
+
+	all := make(map[string][]engine.Finding)
+	for r := range results {
+		all[r.path] = r.findings
 	}
-	
+	switch format {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(all)
+	case "sarif":
+		cwd, _ := os.Getwd()
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(sarif.Log(all, cwd))
+	}
+	for path, findings := range all {
+		fmt.Printf("\n=== %s ===\n", path)
+		printText(findings)
+	}
+	return nil
+}
+
+func output(findings []engine.Finding, format string) error {
+	if format == "sarif" {
+		return fmt.Errorf("--format sarif requires --batch")
+	}
 	if format == "json" {
-		jsonOutput, err := json.MarshalIndent(allResults, "", "  ")
-		if err != nil {
-			log.Fatalf("Error marshaling JSON: %v", err)
-		}
-		fmt.Println(string(jsonOutput))
-	} else {
-		for path, issues := range allResults {
-			fmt.Printf("\n=== %s ===\n", path)
-			if len(issues) == 0 {
-				fmt.Println("No security vulnerabilities found.")
-			} else {
-				for i, issue := range issues {
-					fmt.Printf("%d. [Line %d] (%s) %s\n", i+1, issue.Line, issue.Severity, issue.Issue)
-				}
-			}
-		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(nonNil(findings))
+	}
+	printText(findings)
+	return nil
+}
+
+func printText(findings []engine.Finding) {
+	if len(findings) == 0 {
+		fmt.Println("No security vulnerabilities found.")
+		return
+	}
+	for i, f := range findings {
+		fmt.Printf("%d. [Line %d] (%s) %s\n", i+1, f.Line, f.Severity, f.Issue)
 	}
 }
 
-func outputResults(issues []SecurityIssue, format string) {
-	if format == "json" {
-		jsonOutput, err := json.MarshalIndent(issues, "", "  ")
-		if err != nil {
-			log.Fatalf("Error marshaling JSON: %v", err)
-		}
-		fmt.Println(string(jsonOutput))
-	} else {
-		if len(issues) == 0 {
-			fmt.Println("No security vulnerabilities found.")
-		} else {
-			for i, issue := range issues {
-				fmt.Printf("%d. [Line %d] (%s) %s\n", i+1, issue.Line, issue.Severity, issue.Issue)
-			}
-		}
+func nonNil(f []engine.Finding) []engine.Finding {
+	if f == nil {
+		return []engine.Finding{}
 	}
-}
-
-// detectLanguage determines the programming language from file extension
-func detectLanguage(filePath string) Language {
-	ext := strings.ToLower(filepath.Ext(filePath))
-	
-	switch ext {
-	case ".py":
-		return LanguagePython
-	case ".js", ".jsx":
-		return LanguageJavaScript
-	case ".ts", ".tsx":
-		return LanguageTypeScript
-	case ".java":
-		return LanguageJava
-	case ".c":
-		return LanguageC
-	case ".cpp", ".cc", ".cxx", ".hpp", ".h":
-		return LanguageCPP
-	case ".go":
-		return LanguageGo
-	case ".php":
-		return LanguagePHP
-	case ".cs":
-		return LanguageCSharp
-	case ".rs":
-		return LanguageRust
-	default:
-		return LanguageUnknown
-	}
+	return f
 }

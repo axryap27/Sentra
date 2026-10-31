@@ -1,0 +1,10 @@
+# Ship only: dist/extension.js, bin/<platform>/sentra-analyzer, icon, README, LICENSE, CHANGELOG.
+# (model.json is embedded in the Go binary at build time.)
+**
+!dist/extension.js
+!bin/**
+!icon.png
+!README.md
+!LICENSE
+!CHANGELOG.md
+!package.json

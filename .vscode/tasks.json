@@ -1,0 +1,13 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "sentra: build",
+            "detail": "Build the Go analyzer into bin/local and bundle the extension into dist/",
+            "type": "shell",
+            "command": "make go-build && npm run build",
+            "group": { "kind": "build", "isDefault": true },
+            "problemMatcher": ["$tsc"]
+        }
+    ]
+}

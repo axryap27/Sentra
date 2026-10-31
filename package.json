@@ -1,11 +1,11 @@
 {
   "name": "sentra",
-  "displayName": "sentra",
-  "description": "Multi-language security vulnerability codebase scanner with local AI-powered analysis",
-  "version": "0.2.0",
+  "displayName": "Sentra — Security Scanner",
+  "description": "Real-time security vulnerability scanner for Python, JS, TS, Java, C, C++, Go, PHP, C#, and Rust. AST-based analysis with local ML. No code sent to any server.",
+  "version": "0.3.0",
   "publisher": "aaryapatel",
   "license": "MIT",
-
+  "author": "Aarya Patel",
   "repository": {
     "type": "git",
     "url": "https://github.com/axryap27/sentra"
@@ -14,24 +14,46 @@
     "url": "https://github.com/axryap27/sentra/issues"
   },
   "homepage": "https://github.com/axryap27/sentra#readme",
-  "icon": "Icon.png",
+  "icon": "icon.png",
+  "galleryBanner": {
+    "color": "#0d1117",
+    "theme": "dark"
+  },
   "engines": {
-    "vscode": "^1.74.0"
+    "vscode": "^1.85.0"
   },
   "categories": [
     "Linters",
+    "Programming Languages",
     "Other"
   ],
   "keywords": [
     "security",
+    "sast",
     "vulnerability",
+    "static analysis",
+    "cwe",
+    "owasp",
+    "sarif",
+    "tree-sitter",
     "code analysis",
-    "cybersecurity"
+    "cybersecurity",
+    "sql injection",
+    "xss",
+    "devsecops",
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "go",
+    "rust"
   ],
   "activationEvents": [
     "onLanguage:python",
-    "onLanguage:javascript", 
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact",
     "onLanguage:typescript",
+    "onLanguage:typescriptreact",
     "onLanguage:java",
     "onLanguage:c",
     "onLanguage:cpp",
@@ -40,104 +62,152 @@
     "onLanguage:csharp",
     "onLanguage:rust"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "secureCodeAnalyzer.scanFile",
+        "command": "sentra.scanFile",
         "title": "Scan File for Vulnerabilities",
-        "category": "Security"
+        "category": "Sentra"
       },
       {
-        "command": "secureCodeAnalyzer.scanWorkspace",
+        "command": "sentra.scanWorkspace",
         "title": "Scan Workspace for Vulnerabilities",
-        "category": "Security"
+        "category": "Sentra"
       },
       {
-        "command": "secureCodeAnalyzer.clearDiagnostics",
+        "command": "sentra.clearDiagnostics",
         "title": "Clear Security Diagnostics",
-        "category": "Security"
+        "category": "Sentra"
       },
       {
-        "command": "secureCodeAnalyzer.showReport",
+        "command": "sentra.showReport",
         "title": "Show Security Report",
-        "category": "Security"
+        "category": "Sentra"
+      },
+      {
+        "command": "sentra.exportSarif",
+        "title": "Export Results as SARIF",
+        "category": "Sentra"
+      },
+      {
+        "command": "sentra.showLog",
+        "title": "Show Log",
+        "category": "Sentra"
       }
     ],
     "menus": {
       "editor/context": [
         {
-          "when": "resourceLangId == python || resourceLangId == javascript || resourceLangId == typescript || resourceLangId == java || resourceLangId == c || resourceLangId == cpp || resourceLangId == go || resourceLangId == php || resourceLangId == csharp || resourceLangId == rust",
-          "command": "secureCodeAnalyzer.scanFile",
-          "group": "security@1"
+          "when": "resourceLangId =~ /^(python|javascript|javascriptreact|typescript|typescriptreact|java|c|cpp|go|php|csharp|rust)$/",
+          "command": "sentra.scanFile",
+          "group": "sentra@1"
         }
       ],
       "explorer/context": [
         {
-          "when": "resourceExtname == .py || resourceExtname == .js || resourceExtname == .jsx || resourceExtname == .ts || resourceExtname == .tsx || resourceExtname == .java || resourceExtname == .c || resourceExtname == .cpp || resourceExtname == .cc || resourceExtname == .cxx || resourceExtname == .hpp || resourceExtname == .h || resourceExtname == .go || resourceExtname == .php || resourceExtname == .cs || resourceExtname == .rs",
-          "command": "secureCodeAnalyzer.scanFile",
-          "group": "security@1"
+          "when": "resourceExtname =~ /^\\.(py|js|jsx|mjs|cjs|ts|tsx|java|c|h|cpp|cc|cxx|hpp|go|php|cs|rs)$/",
+          "command": "sentra.scanFile",
+          "group": "sentra@1"
         }
       ]
     },
     "configuration": {
       "title": "Sentra",
       "properties": {
-        "secureCodeAnalyzer.enabled": {
+        "sentra.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Enable/disable the security analyzer"
+          "description": "Enable or disable Sentra."
         },
-        "secureCodeAnalyzer.autoScan": {
+        "sentra.autoScan": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically scan files on save"
+          "description": "Scan files when they are opened or saved."
         },
-        "secureCodeAnalyzer.pythonPath": {
-          "type": "string",
-          "default": "python",
-          "description": "Path to Python interpreter"
+        "sentra.scanOnType": {
+          "type": "boolean",
+          "default": true,
+          "description": "Rescan the active file as you type (after a pause; see sentra.scanOnTypeDelay). Requires sentra.autoScan."
         },
-        "secureCodeAnalyzer.severityLevel": {
+        "sentra.scanOnTypeDelay": {
+          "type": "number",
+          "default": 300,
+          "minimum": 50,
+          "description": "Milliseconds to wait after the last keystroke before rescanning."
+        },
+        "sentra.severityLevel": {
           "type": "string",
-          "enum": ["High", "Medium", "Low"],
+          "enum": [
+            "High",
+            "Medium",
+            "Low"
+          ],
           "default": "Medium",
-          "description": "Minimum severity level to report"
+          "description": "Minimum severity level to report."
         },
-        "secureCodeAnalyzer.excludePatterns": {
+        "sentra.excludePatterns": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "default": ["**/test/**", "**/tests/**", "**/__pycache__/**"],
-          "description": "File patterns to exclude from scanning"
+          "default": [
+            "**/node_modules/**",
+            "**/test/**",
+            "**/tests/**",
+            "**/__pycache__/**",
+            "**/.git/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/vendor/**",
+            "**/target/**"
+          ],
+          "description": "Glob patterns of files to exclude from scanning (applies to every scan, not just workspace scans)."
         },
-        "secureCodeAnalyzer.showStatusBar": {
+        "sentra.showStatusBar": {
           "type": "boolean",
           "default": true,
-          "description": "Show security status in the status bar"
+          "description": "Show Sentra's status in the status bar."
         },
-        "secureCodeAnalyzer.maxFileSize": {
+        "sentra.maxFileSize": {
           "type": "number",
           "default": 1048576,
-          "description": "Maximum file size in bytes to analyze (default: 1MB)"
+          "description": "Maximum file size in bytes to analyze (default 1 MB)."
         },
-        "secureCodeAnalyzer.enableIncrementalScanning": {
+        "sentra.enableIncrementalScanning": {
           "type": "boolean",
           "default": true,
-          "description": "Enable incremental scanning to skip unchanged files"
+          "description": "Cache results by content hash and skip unchanged files."
         }
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "vscode:prepublish": "npm run build -- --production",
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc -p ./ --noEmit",
+    "lint": "eslint src",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "compile:tests": "tsc -p ./",
+    "test:unit": "tsc -p ./ && mocha \"out/test/unit/**/*.test.js\"",
+    "test:integration": "npm run build && tsc -p ./ && node out/test/runIntegration.js",
+    "test": "npm run test:unit"
   },
   "devDependencies": {
-    "@types/node": "16.x",
-    "@types/vscode": "^1.74.0",
-    "typescript": "^4.9.4"
+    "@eslint/js": "9.39.5",
+    "@types/mocha": "10.0.10",
+    "@types/node": "20.19.43",
+    "@types/vscode": "1.85.0",
+    "@vscode/test-electron": "2.5.2",
+    "@vscode/vsce": "4.1.0",
+    "esbuild": "0.28.2",
+    "eslint": "9.39.5",
+    "mocha": "11.8.0",
+    "ovsx": "1.3.0",
+    "prettier": "3.9.10",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.1"
   }
 }

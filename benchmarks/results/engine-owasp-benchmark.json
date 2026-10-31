@@ -1,0 +1,26 @@
+{
+  "corpus": "/tmp/claude-0/corpus/owasp-benchmark",
+  "files": 2773,
+  "lines": 286593,
+  "bytes": 11757253,
+  "findings": 1779,
+  "latency_ms": {
+    "max": 121.663,
+    "p50": 1.274,
+    "p90": 2.215,
+    "p99": 3.389
+  },
+  "serial_sec": 4.001731355,
+  "lines_per_sec_single_thread": 71617.25127847819,
+  "workers": 4,
+  "parallel_sec_best": 1.4645943639999999,
+  "parallel_sec_runs": [
+    1.509762148,
+    1.476394015,
+    1.4645943639999999
+  ],
+  "lines_per_sec_parallel": 195680.80216919366,
+  "go_version": "go1.24.7",
+  "num_cpu": 4,
+  "os_arch": "linux/amd64"
+}

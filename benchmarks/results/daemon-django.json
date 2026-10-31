@@ -1,0 +1,21 @@
+{
+  "corpus": "/tmp/claude-0/corpus/django",
+  "files": 2899,
+  "lines": 500775,
+  "findings": 272,
+  "cpus": 4,
+  "spawn_per_file_ms": {
+    "n": 300,
+    "p50": 13.16,
+    "p90": 19.27,
+    "p99": 44.33
+  },
+  "daemon_round_trip_ms": {
+    "n": 300,
+    "p50": 1.28,
+    "p90": 7.5,
+    "p99": 36.9
+  },
+  "daemon_workspace_pipelined_ms": 3356,
+  "daemon_workspace_lines_per_sec": 149211
+}
