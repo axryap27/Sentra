@@ -73,6 +73,11 @@
         "command": "sentra.showReport",
         "title": "Show Security Report",
         "category": "Sentra"
+      },
+      {
+        "command": "sentra.showLog",
+        "title": "Show Log",
+        "category": "Sentra"
       }
     ],
     "menus": {

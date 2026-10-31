@@ -6,9 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"go/token"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 )
@@ -79,9 +81,15 @@ func main() {
 	var filePath = flag.String("file", "", "File to analyze")
 	var batchMode = flag.Bool("batch", false, "Batch mode: read file paths from stdin")
 	var format = flag.String("format", "json", "Output format (json or text)")
-	var workers = flag.Int("workers", 4, "Number of worker goroutines for batch processing")
+	var workers = flag.Int("workers", runtime.NumCPU(), "Number of worker goroutines for batch processing")
+	var useStdin = flag.Bool("stdin", false, "Read source code from stdin instead of --file")
+	var lang = flag.String("lang", "", "Language of stdin source (python, javascript, ...); inferred from --file if empty")
 	flag.Parse()
 
+	if *useStdin {
+		processStdin(*lang, *filePath, *format)
+		return
+	}
 	if *batchMode {
 		processBatch(*workers, *format)
 	} else {
@@ -91,6 +99,36 @@ func main() {
 		}
 		processSingleFile(*filePath, *format)
 	}
+}
+
+// processStdin analyzes source passed on stdin. --file, if given, is only used
+// as a hint for language detection; it is never read from disk.
+func processStdin(lang, pathHint, format string) {
+	content, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		log.Fatalf("Error reading stdin: %v", err)
+	}
+	language := Language(lang)
+	if lang == "" {
+		language = detectLanguage(pathHint)
+	}
+	if !isKnownLanguage(language) {
+		log.Fatalf("Unsupported language %q", lang)
+	}
+	analyzer := NewAnalyzer(language)
+	if err := analyzer.analyzeFile(string(content)); err != nil {
+		log.Fatalf("Analysis error: %v", err)
+	}
+	outputResults(analyzer.getIssues(), format)
+}
+
+func isKnownLanguage(l Language) bool {
+	switch l {
+	case LanguagePython, LanguageJavaScript, LanguageTypeScript, LanguageJava, LanguageC,
+		LanguageCPP, LanguageGo, LanguagePHP, LanguageCSharp, LanguageRust:
+		return true
+	}
+	return false
 }
 
 func processSingleFile(filePath, format string) {
@@ -211,6 +249,9 @@ func processBatch(workers int, format string) {
 }
 
 func outputResults(issues []SecurityIssue, format string) {
+	if issues == nil {
+		issues = []SecurityIssue{} // emit [] rather than null
+	}
 	if format == "json" {
 		jsonOutput, err := json.MarshalIndent(issues, "", "  ")
 		if err != nil {

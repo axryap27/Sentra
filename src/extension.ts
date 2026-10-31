@@ -1,94 +1,130 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
-import { SecurityAnalyzer } from './analyzer';
-import { SecurityStatusBar } from './statusBar';
-import { SecurityReportPanel } from './webviewPanel';
+import { AnalyzerError, findAnalyzerBinary } from './analyzerBinary';
+import { AnalyzerClient } from './analyzerClient';
+import { CONFIG_SECTION, getConfig } from './config';
+import { ReportPanel } from './reportPanel';
+import { ResultCache } from './resultCache';
+import { Analyzer, Scanner } from './scanner';
+import { SentraStatusBar } from './statusBar';
 
-let analyzer: SecurityAnalyzer;
-let statusBar: SecurityStatusBar;
-let reportPanel: SecurityReportPanel;
+export function activate(context: vscode.ExtensionContext): void {
+    const log = vscode.window.createOutputChannel('Sentra');
+    const statusBar = new SentraStatusBar();
+    const reportPanel = new ReportPanel();
+    statusBar.setVisible(getConfig().showStatusBar);
 
-export function activate(context: vscode.ExtensionContext) {
-    console.log('Sentra extension is now active');
+    const binary = findAnalyzerBinary(context.extensionPath);
+    let analyzer: Analyzer;
+    if (binary) {
+        analyzer = new AnalyzerClient(binary);
+        log.appendLine(`Using analyzer ${binary}`);
+    } else {
+        const msg = `No Sentra analyzer binary for ${process.platform}-${process.arch}. Install the platform-specific build of the extension.`;
+        analyzer = { analyze: () => Promise.reject(new AnalyzerError('missing-binary', msg)) };
+        log.appendLine(msg);
+        statusBar.setError(msg);
+    }
 
-    // Initialize components
-    analyzer = new SecurityAnalyzer(context);
-    statusBar = new SecurityStatusBar();
-    reportPanel = new SecurityReportPanel(context);
+    const engineVersion = String(context.extension.packageJSON.version ?? '0');
+    const scanner = new Scanner(
+        analyzer,
+        new ResultCache(context.workspaceState, engineVersion),
+        statusBar,
+        log,
+    );
+    if (!getConfig().enabled) {
+        statusBar.setDisabled();
+    }
 
-    // Register commands
-    const scanFileCommand = vscode.commands.registerCommand('sentra.scanFile', async (uri?: vscode.Uri) => {
-        const targetUri = uri || vscode.window.activeTextEditor?.document.uri;
-        if (targetUri) {
-            await analyzer.scanFile(targetUri);
-        } else {
-            vscode.window.showWarningMessage('No file selected for scanning');
+    const autoScan = (doc: vscode.TextDocument) => {
+        if (getConfig(doc.uri).autoScan) {
+            void scanner.scanDocument(doc);
         }
-    });
+    };
 
-    const scanWorkspaceCommand = vscode.commands.registerCommand('sentra.scanWorkspace', async () => {
-        const reports = await analyzer.scanWorkspace();
-        if (reports) {
-            reportPanel.showReport(reports);
-            const totalIssues = reports.reduce((sum, report) => sum + report.issues.length, 0);
-            statusBar.updateIssueCount(totalIssues);
-        }
-    });
-
-    const showReportCommand = vscode.commands.registerCommand('sentra.showReport', async () => {
-        const reports = await analyzer.getLastWorkspaceReport();
-        if (reports) {
-            reportPanel.showReport(reports);
-        } else {
-            vscode.window.showInformationMessage('No security report available. Run a workspace scan first.');
-        }
-    });
-
-    const clearDiagnosticsCommand = vscode.commands.registerCommand('sentra.clearDiagnostics', () => {
-        analyzer.clearAllDiagnostics();
-    });
-
-    // Register file save listener for auto-scan
-    const onSaveDisposable = vscode.workspace.onDidSaveTextDocument(async (document) => {
-        const config = vscode.workspace.getConfiguration('sentra');
-        const supportedLanguages = ['python', 'javascript', 'typescript', 'java', 'c', 'cpp', 'go', 'php', 'csharp', 'rust'];
-        if (config.get('autoScan') && config.get('enabled') && supportedLanguages.includes(document.languageId)) {
-            await analyzer.scanFile(document.uri);
-        }
-    });
-
-    // Register file open listener
-    const onOpenDisposable = vscode.workspace.onDidOpenTextDocument(async (document) => {
-        const config = vscode.workspace.getConfiguration('sentra');
-        const supportedLanguages = ['python', 'javascript', 'typescript', 'java', 'c', 'cpp', 'go', 'php', 'csharp', 'rust'];
-        if (config.get('enabled') && supportedLanguages.includes(document.languageId)) {
-            await analyzer.scanFile(document.uri);
-        }
-    });
-
-    // Add to context subscriptions
     context.subscriptions.push(
-        scanFileCommand,
-        scanWorkspaceCommand,
-        showReportCommand,
-        clearDiagnosticsCommand,
-        onSaveDisposable,
-        onOpenDisposable,
-        statusBar
+        log,
+        statusBar,
+        reportPanel,
+        scanner,
+        vscode.commands.registerCommand('sentra.scanFile', async (uri?: vscode.Uri) => {
+            const target = uri ?? vscode.window.activeTextEditor?.document.uri;
+            if (!target) {
+                vscode.window.showWarningMessage('Sentra: no file selected to scan.');
+                return;
+            }
+            const reason = scanner.skipReason(target, getConfig(target));
+            if (reason) {
+                vscode.window.showInformationMessage(`Sentra: not scanning this file (${reason}).`);
+                return;
+            }
+            await scanner.scanUri(target);
+        }),
+        vscode.commands.registerCommand('sentra.scanWorkspace', async () => {
+            if (!getConfig().enabled) {
+                vscode.window.showInformationMessage('Sentra is disabled (sentra.enabled).');
+                return;
+            }
+            const result = await vscode.window.withProgress(
+                {
+                    location: vscode.ProgressLocation.Notification,
+                    title: 'Sentra: scanning workspace',
+                    cancellable: true,
+                },
+                (progress, token) => {
+                    let last = 0;
+                    return scanner.scanWorkspace(token, (done, total) => {
+                        const pct = (done / total) * 100;
+                        progress.report({
+                            increment: pct - last,
+                            message: `${done}/${total} files`,
+                        });
+                        last = pct;
+                    });
+                },
+            );
+            log.appendLine(
+                `Workspace scan: ${result.filesScanned} files (${result.cacheHits} cached) in ${result.durationMs} ms`,
+            );
+            if (!statusBar.isError) {
+                reportPanel.show(result.reports);
+            }
+        }),
+        vscode.commands.registerCommand('sentra.showReport', () => {
+            const reports = scanner.getLastReport();
+            if (reports) {
+                reportPanel.show(reports);
+            } else {
+                vscode.window.showInformationMessage(
+                    'Sentra: no report yet. Run "Scan Workspace for Vulnerabilities" first.',
+                );
+            }
+        }),
+        vscode.commands.registerCommand('sentra.clearDiagnostics', () => scanner.clear()),
+        vscode.commands.registerCommand('sentra.showLog', () => log.show()),
+        vscode.workspace.onDidOpenTextDocument(autoScan),
+        vscode.workspace.onDidSaveTextDocument(autoScan),
+        vscode.workspace.onDidCloseTextDocument((doc) => {
+            // Keep workspace-scan results for files on disk; drop results for closed untitled buffers.
+            if (doc.uri.scheme === 'untitled') {
+                scanner.forget(doc.uri);
+            }
+        }),
+        vscode.workspace.onDidChangeConfiguration((e) => {
+            if (!e.affectsConfiguration(CONFIG_SECTION)) {
+                return;
+            }
+            const cfg = getConfig();
+            statusBar.setVisible(cfg.showStatusBar);
+            scanner.refreshFromSettings();
+            if (e.affectsConfiguration(`${CONFIG_SECTION}.enabled`) && cfg.enabled) {
+                vscode.workspace.textDocuments.forEach(autoScan);
+            }
+        }),
     );
 
-    // Show activation message
-    vscode.window.showInformationMessage('Sentra is ready!');
+    // Scan documents that were already open before activation.
+    vscode.workspace.textDocuments.forEach(autoScan);
 }
 
-export function deactivate() {
-    if (analyzer) {
-        analyzer.dispose();
-    }
-    if (statusBar) {
-        statusBar.dispose();
-    }
-    if (reportPanel) {
-        reportPanel.dispose();
-    }
-}
+export function deactivate(): void {}
