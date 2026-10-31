@@ -51,8 +51,9 @@ All notable changes to Sentra are documented here. The format follows
 - Inline suppressions: `sentra-ignore`, `sentra-ignore: rule1, rule2`, `sentra-ignore-file`.
 
 ### Performance
-- Serial analysis of django 5.1 (2,899 files, 501k lines) went from 38.7 s to 8.2 s,
-  and the 4-worker workspace scan from 19.0 s to 2.8 s. See BENCHMARKS.md.
+- Serial analysis of django 5.1 (2,900 files, 501k lines) went from 38.7 s to 7.6 s,
+  and the 4-worker workspace scan from 19.0 s to 2.6 s; per-scan round trip from the
+  editor went from 13.2 ms (process per scan) to 1.3 ms (daemon). See BENCHMARKS.md.
   - Minified files no longer cost quadratic time (one 163 KB line took ~10 s).
   - AST walk uses a TreeCursor and an ancestor-context stack instead of
     `Child(i)` loops and repeated `Parent()` walks.
@@ -76,6 +77,10 @@ All notable changes to Sentra are documented here. The format follows
 - The analyzer printed `null` instead of `[]` for files with no findings.
 - String-concatenation detection was confused by `'` inside `"..."` strings.
 - The fallback line scanner (removed) flagged words such as "query" in docstrings.
+
+### Documentation
+- README rewritten (architecture, settings, suppressions, SARIF/CI, privacy, honest
+  accuracy summary); new EVAL.md, BENCHMARKS.md and PUBLISHING.md.
 
 ### Removed
 - Committed build artifacts (`node_modules/`, `out/`, the `.vsix`, and a macOS-only analyzer binary).

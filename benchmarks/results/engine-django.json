@@ -1,0 +1,26 @@
+{
+  "corpus": "/tmp/claude-0/corpus/django",
+  "files": 2900,
+  "lines": 500838,
+  "bytes": 18697528,
+  "findings": 272,
+  "latency_ms": {
+    "max": 194.014,
+    "p50": 0.481,
+    "p90": 5.381,
+    "p99": 35.989
+  },
+  "serial_sec": 7.631907176,
+  "lines_per_sec_single_thread": 65624.22582588287,
+  "workers": 4,
+  "parallel_sec_best": 2.600800866,
+  "parallel_sec_runs": [
+    2.85607527,
+    2.600800866,
+    2.696402319
+  ],
+  "lines_per_sec_parallel": 192570.68334119816,
+  "go_version": "go1.24.7",
+  "num_cpu": 4,
+  "os_arch": "linux/amd64"
+}

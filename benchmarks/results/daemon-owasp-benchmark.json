@@ -1,0 +1,21 @@
+{
+  "corpus": "/tmp/claude-0/corpus/owasp-benchmark",
+  "files": 2773,
+  "lines": 286593,
+  "findings": 1779,
+  "cpus": 4,
+  "spawn_per_file_ms": {
+    "n": 300,
+    "p50": 13.71,
+    "p90": 17.08,
+    "p99": 20.35
+  },
+  "daemon_round_trip_ms": {
+    "n": 300,
+    "p50": 2.12,
+    "p90": 3.36,
+    "p99": 9.96
+  },
+  "daemon_workspace_pipelined_ms": 2316,
+  "daemon_workspace_lines_per_sec": 123758
+}
