@@ -116,6 +116,9 @@ func main() {
 }
 
 func load(root string, maxSize int64) ([]file, error) {
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved // WalkDir does not descend into a symlinked root
+	}
 	var files []file
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {

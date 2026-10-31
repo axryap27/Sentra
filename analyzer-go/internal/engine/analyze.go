@@ -126,6 +126,9 @@ func (e *Engine) Score(lang Language, src []byte) ([]Scored, error) {
 		if s != nil && c.AssignedIdentifier != "" && s.cat != CWEXSS {
 			s = nil // assigning to x.query is not calling a sink; only property sinks (innerHTML) apply
 		}
+		if s == nil && !c.ValueIsLiteral {
+			continue // neither a sink nor a possible hardcoded secret: skip feature extraction
+		}
 		fv := extractFeatures(c, lang, s)
 		var rule Rule
 		switch {

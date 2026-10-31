@@ -286,7 +286,12 @@ func (w *walker) callCandidate(n *sitter.Node) *Candidate {
 	if name == "" {
 		return nil
 	}
-	c := &Candidate{Name: name}
+	c := &Candidate{Name: name, Arg: valueInfo{constant: true}}
+	dot := strings.LastIndexByte(name, '.')
+	isMutator := dot > 0 && mutators[name[dot+1:]]
+	if !isMutator && matchSink(name, w.lang) == nil {
+		return c // not a sink: skip argument analysis (most calls; keeps minified files cheap)
+	}
 	var args *sitter.Node
 	c.ArgCount, c.HasStringConcatArg, c.ArgSource, args = w.argInfo(n)
 	if args != nil {
@@ -299,11 +304,9 @@ func (w *walker) callCandidate(n *sitter.Node) *Candidate {
 			t := first.Type()
 			c.FirstArgIsString = strings.Contains(t, "string") || t == "binary_expression" || t == "template_literal"
 		}
-	} else {
-		c.Arg = valueInfo{constant: true}
 	}
 	// recv.add(x), sb.append(x), list.push(x): the receiver now carries x's facts.
-	if dot := strings.LastIndexByte(name, '.'); dot > 0 && mutators[name[dot+1:]] {
+	if isMutator {
 		recv := name[:dot]
 		if names := assignedNames(recv); len(names) == 1 && names[0] == recv {
 			old, _ := w.lookup(recv)

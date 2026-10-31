@@ -174,6 +174,9 @@ func (s *Server) handle(req Request) (resp Response) {
 }
 
 func (s *Server) analyze(p Params) ([]engine.Finding, error) {
+	if p.Content == nil && p.Path == "" {
+		return nil, errors.New("analyze requires params.content or params.path")
+	}
 	lang := engine.Language(p.Language)
 	if p.Language == "" {
 		lang = engine.DetectLanguage(p.Path)
@@ -184,14 +187,12 @@ func (s *Server) analyze(p Params) ([]engine.Finding, error) {
 	var src []byte
 	if p.Content != nil {
 		src = []byte(*p.Content)
-	} else if p.Path != "" {
+	} else {
 		b, err := os.ReadFile(p.Path)
 		if err != nil {
 			return nil, err
 		}
 		src = b
-	} else {
-		return nil, errors.New("analyze requires params.content or params.path")
 	}
 	return s.eng.Analyze(lang, src)
 }
