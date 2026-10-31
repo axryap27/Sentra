@@ -97,10 +97,10 @@ target. Options considered:
   Linux binaries are **static musl** executables, so they run on any distribution regardless of
   glibc version; Windows binaries use MinGW-w64 from zig. Reproducible locally on any OS.
 - **Apple clang (chosen for macOS):** linking Mach-O executables needs the macOS SDK, which is not
-  redistributable, so both darwin targets build on a `macos-14` runner with `clang -arch arm64` /
+  redistributable, so both darwin targets build on a `macos-15` runner with `clang -arch arm64` /
   `-arch x86_64`.
 
-Every binary is then executed on its own OS (including `ubuntu-24.04-arm` and Intel `macos-13`)
+Every binary is then executed on its own OS (including `ubuntu-24.04-arm` and Intel `macos-15-intel`)
 before anything is packaged.
 
 ## Install a VSIX by hand

@@ -26,8 +26,8 @@ jobs:
           - { target: linux-arm64, os: ubuntu-latest }
           - { target: win32-x64, os: ubuntu-latest }
           # Mach-O linking needs the macOS SDK, so darwin builds use Apple clang on macOS.
-          - { target: darwin-arm64, os: macos-14 }
-          - { target: darwin-x64, os: macos-14 }
+          - { target: darwin-arm64, os: macos-15 }
+          - { target: darwin-x64, os: macos-15 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -54,8 +54,8 @@ jobs:
           - { target: linux-x64, os: ubuntu-latest, exe: sentra-analyzer }
           - { target: linux-arm64, os: ubuntu-24.04-arm, exe: sentra-analyzer }
           - { target: win32-x64, os: windows-latest, exe: sentra-analyzer.exe }
-          - { target: darwin-arm64, os: macos-14, exe: sentra-analyzer }
-          - { target: darwin-x64, os: macos-13, exe: sentra-analyzer }
+          - { target: darwin-arm64, os: macos-15, exe: sentra-analyzer }
+          - { target: darwin-x64, os: macos-15-intel, exe: sentra-analyzer }
     runs-on: ${{ matrix.os }}
     defaults:
       run:
