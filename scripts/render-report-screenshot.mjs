@@ -33,13 +33,16 @@ const theme = `:root, body {
   --vscode-foreground: #cccccc; --vscode-editor-background: #1e1e1e; --vscode-panel-border: #3c3c3c;
   --vscode-descriptionForeground: #9d9d9d; --vscode-textLink-foreground: #3794ff;
   --vscode-sideBarSectionHeader-background: #252526; --vscode-errorForeground: #f48771;
-  --vscode-editorWarning-foreground: #cca700; --vscode-editorInfo-foreground: #3794ff; }`;
+  --vscode-editorWarning-foreground: #cca700; --vscode-editorInfo-foreground: #3794ff;
+  --vscode-badge-background: #4d4d4d; --vscode-badge-foreground: #ffffff; --vscode-focusBorder: #007fd4;
+  --vscode-sideBar-background: #252526; --vscode-list-hoverBackground: #2a2d2e; }`;
 const html = renderReport(reports, '').replace('<style>', `<style>${theme}`);
 
 const { chromium } = require('playwright');
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1100, height: 900 }, deviceScaleFactor: 2 });
 await page.setContent(html);
+await page.waitForTimeout(1500); // let the score animation finish
 await page.screenshot({ path: join(root, 'docs', 'report.png'), fullPage: true });
 await browser.close();
 console.log('wrote docs/report.png');

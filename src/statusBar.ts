@@ -1,14 +1,20 @@
 import * as vscode from 'vscode';
 
+export interface IssueCounts {
+    high: number;
+    medium: number;
+    low: number;
+}
+
 type State =
-    | { kind: 'idle'; issues: number }
+    | { kind: 'idle'; counts: IssueCounts }
     | { kind: 'scanning' }
     | { kind: 'error'; message: string }
     | { kind: 'disabled' };
 
 export class SentraStatusBar implements vscode.Disposable {
     private readonly item: vscode.StatusBarItem;
-    private state: State = { kind: 'idle', issues: 0 };
+    private state: State = { kind: 'idle', counts: { high: 0, medium: 0, low: 0 } };
     private visible = true;
 
     constructor() {
@@ -26,8 +32,8 @@ export class SentraStatusBar implements vscode.Disposable {
         this.render();
     }
 
-    setIssues(issues: number): void {
-        this.state = { kind: 'idle', issues };
+    setIssues(counts: IssueCounts): void {
+        this.state = { kind: 'idle', counts };
         this.render();
     }
 
@@ -70,18 +76,38 @@ export class SentraStatusBar implements vscode.Disposable {
                 this.item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
                 this.item.command = 'sentra.showLog';
                 break;
-            case 'idle':
-                if (s.issues === 0) {
-                    this.item.text = '$(shield) Sentra';
+            case 'idle': {
+                const { high, medium, low } = s.counts;
+                const total = high + medium + low;
+                if (total === 0) {
+                    this.item.text = '$(shield) Sentra: Clean';
                     this.item.tooltip = 'No security issues found. Click to scan the workspace.';
-                } else {
-                    this.item.text = `$(alert) Sentra: ${s.issues}`;
-                    this.item.tooltip = `${s.issues} security issue${s.issues === 1 ? '' : 's'} found. Click to scan the workspace.`;
-                    this.item.backgroundColor = new vscode.ThemeColor(
-                        'statusBarItem.warningBackground',
-                    );
+                    break;
                 }
+                // e.g. "Sentra: 2H · 1M", red when anything is High, yellow otherwise.
+                const parts = [
+                    high ? `${high}H` : '',
+                    medium ? `${medium}M` : '',
+                    low ? `${low}L` : '',
+                ].filter(Boolean);
+                this.item.text = `${high ? '$(error)' : '$(warning)'} Sentra: ${parts.join(' · ')}`;
+                const lines = [`${total} security issue${total === 1 ? '' : 's'} found`];
+                if (high) {
+                    lines.push(`  ${high} High`);
+                }
+                if (medium) {
+                    lines.push(`  ${medium} Medium`);
+                }
+                if (low) {
+                    lines.push(`  ${low} Low`);
+                }
+                lines.push('', 'Click to scan the workspace and open the report.');
+                this.item.tooltip = lines.join('\n');
+                this.item.backgroundColor = new vscode.ThemeColor(
+                    high ? 'statusBarItem.errorBackground' : 'statusBarItem.warningBackground',
+                );
                 break;
+            }
         }
         if (this.visible) {
             this.item.show();

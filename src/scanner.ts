@@ -275,9 +275,19 @@ export class Scanner implements vscode.Disposable {
             this.statusBar.setDisabled();
             return;
         }
-        let count = 0;
-        this.diagnostics.forEach((_uri, diags) => (count += diags.length));
-        this.statusBar.setIssues(count);
+        const counts = { high: 0, medium: 0, low: 0 };
+        this.diagnostics.forEach((_uri, diags) => {
+            for (const d of diags) {
+                if (d.severity === vscode.DiagnosticSeverity.Error) {
+                    counts.high++;
+                } else if (d.severity === vscode.DiagnosticSeverity.Warning) {
+                    counts.medium++;
+                } else {
+                    counts.low++;
+                }
+            }
+        });
+        this.statusBar.setIssues(counts);
     }
 
     private reportError(e: unknown): void {

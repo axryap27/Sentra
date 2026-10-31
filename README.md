@@ -82,6 +82,22 @@ the sink table in [`sinks.go`](analyzer-go/internal/engine/sinks.go).
 5. **Report:** suppressions are applied and findings are returned with positions, rule, CWE,
    severity and confidence.
 
+## What you'll see
+
+- **Squiggles as you type:** red for High (injection, secrets, unsafe deserialization), yellow
+  for Medium (weak crypto, weak randomness, memory management), blue for Low. Hover for the
+  explanation; <kbd>Ctrl/Cmd+.</kbd> for quick fixes.
+- **Context, not just names:** `cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))`
+  is not flagged; `cursor.execute("SELECT * FROM users WHERE id = " + user_id)` is.
+- **Status bar:** a live count by severity, e.g. `Sentra: 2H · 1M`, red when anything is High.
+  Click it to scan the workspace.
+- **Problems panel:** every finding with its rule ID, linked to the CWE entry.
+- **Report:** a security score (100 − 15 per High − 5 per Medium − 1 per Low; a quick indicator,
+  not a measured risk), severity cards and tabs that filter the list, collapsible files, and
+  links to each line and CWE.
+
+No configuration required: install, open a supported file, and Sentra runs.
+
 ## Usage
 
 Sentra scans supported files when you open them, save them, or pause typing. Commands

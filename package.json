@@ -1,7 +1,7 @@
 {
   "name": "sentra",
-  "displayName": "Sentra",
-  "description": "Real-time, fully local security vulnerability scanner for 10 languages (tree-sitter + Random Forest).",
+  "displayName": "Sentra — Security Scanner",
+  "description": "Real-time security vulnerability scanner for Python, JS, TS, Java, C, C++, Go, PHP, C#, and Rust. AST-based analysis with local ML. No code sent to any server.",
   "version": "0.3.0",
   "publisher": "aaryapatel",
   "license": "MIT",
@@ -35,7 +35,18 @@
     "cwe",
     "owasp",
     "sarif",
-    "tree-sitter"
+    "tree-sitter",
+    "code analysis",
+    "cybersecurity",
+    "sql injection",
+    "xss",
+    "devsecops",
+    "python",
+    "javascript",
+    "typescript",
+    "java",
+    "go",
+    "rust"
   ],
   "activationEvents": [
     "onLanguage:python",

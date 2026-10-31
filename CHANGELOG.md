@@ -27,7 +27,9 @@ All notable changes to Sentra are documented here. The format follows
 - Hovers explain each finding: rule, CWE link, severity, model confidence, remediation.
 - `Sentra: Export Results as SARIF` and `sentra-analyzer --batch --format sarif` produce
   SARIF 2.1.0 for GitHub code scanning (with `security-severity`).
-- The report sorts by severity and links each finding's CWE.
+- Report dashboard: security score ring, severity cards and tabs that filter findings,
+  collapsible per-file sections with severity badges, links to each line and CWE.
+- Status bar shows counts by severity (`Sentra: 2H · 1M`), red when anything is High.
 
 ### Packaging
 - Platform-specific VSIX files for linux-x64, linux-arm64, win32-x64, darwin-arm64 and
