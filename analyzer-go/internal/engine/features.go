@@ -1,6 +1,7 @@
-package main
+package engine
 
 import (
+	"sort"
 	"strings"
 )
 
@@ -179,201 +180,154 @@ var secretPrefixes = []string{
 	"xoxb-", "xoxp-", "Bearer ", "Basic ",
 }
 
-// languageToID maps Language to a numeric ID for the feature vector.
-func languageToID(lang Language) float64 {
-	switch lang {
-	case LanguagePython:
-		return 0
-	case LanguageJavaScript:
-		return 1
-	case LanguageTypeScript:
-		return 2
-	case LanguageJava:
-		return 3
-	case LanguageC:
-		return 4
-	case LanguageCPP:
-		return 5
-	case LanguageGo:
-		return 6
-	case LanguagePHP:
-		return 7
-	case LanguageCSharp:
-		return 8
-	case LanguageRust:
-		return 9
-	default:
-		return -1
+// Lowercased pattern tables, built once at init instead of on every call.
+var (
+	lowerUserInput    = lowerAll(userInputPatterns)
+	lowerSanitization = lowerAll(sanitizationPatterns)
+	lowerWeakCrypto   = lowerAll(weakCryptoPatterns)
+	lowerFormatString = lowerAll(formatStringPatterns)
+	lowerSecretIdents = lowerAll(secretIdentifierPatterns)
+	funcIndex         = buildFuncIndex(dangerousFunctions)
+)
+
+func lowerAll(ps []string) []string {
+	out := make([]string, len(ps))
+	for i, p := range ps {
+		out[i] = strings.ToLower(p)
 	}
+	return out
 }
 
-// ExtractFeatures converts a CandidateNode into a FeatureVector.
-func ExtractFeatures(c *CandidateNode, lang Language) FeatureVector {
+// ExtractFeatures converts a Candidate into a FeatureVector.
+func ExtractFeatures(c *Candidate, lang Language) FeatureVector {
 	fv := FeatureVector{
-		LanguageID: languageToID(lang),
+		LanguageID:            lang.id(),
+		DangerousFuncCategory: funcIndex.match(c.Name),
+		ArgCount:              float64(c.ArgCount),
+		HasStringConcatInArgs: b2f(c.HasStringConcatArg),
+		IsInComment:           b2f(c.IsInComment),
+		IsInTryCatch:          b2f(c.IsInTryCatch),
+		IsInConditional:       b2f(c.IsInConditional),
+		NodeDepth:             float64(c.NodeDepth),
+		IsInLoop:              b2f(c.IsInLoop),
+		IsPublicFunction:      b2f(c.IsPublicFunction),
 	}
 
-	// --- Feature 0: Dangerous function category ---
-	fv.DangerousFuncCategory = matchDangerousFunction(c.Name)
-
-	// --- Feature 1: Argument count ---
-	fv.ArgCount = float64(c.ArgCount)
-
-	// --- Feature 2: String concatenation in arguments ---
-	if c.HasStringConcatArg {
-		fv.HasStringConcatInArgs = 1.0
-	}
-
-	// --- Feature 3: User input source ---
-	combined := c.ArgSource + " " + c.RawLine
-	if containsAny(combined, userInputPatterns) {
-		fv.HasUserInputSource = 1.0
-	}
-
-	// --- Feature 4: In comment ---
-	if c.IsInComment {
-		fv.IsInComment = 1.0
-	}
-
-	// --- Feature 5: In try/catch ---
-	if c.IsInTryCatch {
-		fv.IsInTryCatch = 1.0
-	}
-
-	// --- Feature 6: In conditional ---
-	if c.IsInConditional {
-		fv.IsInConditional = 1.0
-	}
-
-	// --- Feature 7: Sanitization nearby ---
-	if containsAny(c.RawLine, sanitizationPatterns) {
-		fv.HasSanitizationNearby = 1.0
-	}
-
-	// --- Feature 8: Node depth ---
-	fv.NodeDepth = float64(c.NodeDepth)
-
-	// --- Feature 9: In loop ---
-	if c.IsInLoop {
-		fv.IsInLoop = 1.0
-	}
-
-	// --- Feature 10: Format string ---
-	if containsAny(combined, formatStringPatterns) {
-		fv.HasFormatString = 1.0
-	}
-
-	// --- Feature 11: Public function ---
-	if c.IsPublicFunction {
-		fv.IsPublicFunction = 1.0
-	}
-
-	// --- Feature 12: Weak crypto ---
-	if containsAny(combined, weakCryptoPatterns) {
-		fv.UsesWeakCrypto = 1.0
-	}
-
-	// --- Feature 13: Hardcoded secret ---
+	combined := strings.ToLower(c.ArgSource + " " + c.RawLine)
+	fv.HasUserInputSource = b2f(containsAnyLower(combined, lowerUserInput))
+	fv.HasSanitizationNearby = b2f(containsAnyLower(strings.ToLower(c.RawLine), lowerSanitization))
+	fv.HasFormatString = b2f(containsAnyLower(combined, lowerFormatString))
+	fv.UsesWeakCrypto = b2f(containsAnyLower(combined, lowerWeakCrypto))
 	fv.HasHardcodedSecret = detectHardcodedSecret(c)
-
 	return fv
 }
 
-// matchDangerousFunction finds the CWE category for a function name.
-// Uses exact match, then last-segment match, then compound substring match.
-func matchDangerousFunction(name string) float64 {
-	// Exact match (highest priority)
-	if cat, ok := dangerousFunctions[name]; ok {
+func b2f(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// funcMatcher resolves a callee name to a CWE category.
+type funcMatcher struct {
+	exact       map[string]float64
+	exactLower  map[string]float64
+	lastSegment map[string]float64 // lowercased single-word patterns
+	compound    []compoundPattern  // lowercased dotted patterns, longest first
+}
+
+type compoundPattern struct {
+	lower string
+	cat   float64
+}
+
+func buildFuncIndex(m map[string]float64) *funcMatcher {
+	fm := &funcMatcher{
+		exact:       m,
+		exactLower:  make(map[string]float64, len(m)),
+		lastSegment: make(map[string]float64, len(m)),
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // deterministic when lowercased patterns collide
+	for _, k := range keys {
+		lk := strings.ToLower(k)
+		if _, dup := fm.exactLower[lk]; !dup {
+			fm.exactLower[lk] = m[k]
+		}
+		if strings.Contains(k, ".") {
+			fm.compound = append(fm.compound, compoundPattern{lk, m[k]})
+		} else if _, dup := fm.lastSegment[lk]; !dup {
+			fm.lastSegment[lk] = m[k]
+		}
+	}
+	sort.SliceStable(fm.compound, func(i, j int) bool { return len(fm.compound[i].lower) > len(fm.compound[j].lower) })
+	return fm
+}
+
+// match tries an exact match, then case-insensitive exact, then the last dotted
+// segment against single-word patterns, then dotted patterns as substrings.
+func (fm *funcMatcher) match(name string) float64 {
+	if cat, ok := fm.exact[name]; ok {
 		return cat
 	}
-
 	lower := strings.ToLower(name)
-
-	// Try exact match case-insensitive
-	for pattern, cat := range dangerousFunctions {
-		if lower == strings.ToLower(pattern) {
-			return cat
+	if cat, ok := fm.exactLower[lower]; ok {
+		return cat
+	}
+	last := lower
+	if i := strings.LastIndexByte(lower, '.'); i >= 0 {
+		last = lower[i+1:]
+	}
+	if cat, ok := fm.lastSegment[last]; ok {
+		return cat
+	}
+	for _, p := range fm.compound {
+		if strings.Contains(lower, p.lower) {
+			return p.cat
 		}
 	}
-
-	// Extract the last segment after the last dot (e.g., "os.system" → "system")
-	lastSegment := name
-	if idx := strings.LastIndex(name, "."); idx >= 0 {
-		lastSegment = name[idx+1:]
-	}
-	lastSegmentLower := strings.ToLower(lastSegment)
-
-	// Match last segment against single-word patterns only
-	for pattern, cat := range dangerousFunctions {
-		if !strings.Contains(pattern, ".") && strings.ToLower(pattern) == lastSegmentLower {
-			return cat
-		}
-	}
-
-	// Match full name against compound patterns (containing dots)
-	for pattern, cat := range dangerousFunctions {
-		if strings.Contains(pattern, ".") && strings.Contains(lower, strings.ToLower(pattern)) {
-			return cat
-		}
-	}
-
 	return CWENone
 }
 
 // detectHardcodedSecret checks if an assignment looks like a hardcoded secret.
-func detectHardcodedSecret(c *CandidateNode) float64 {
-	// Check if the identifier name suggests a secret
-	identifier := strings.ToLower(c.AssignedIdentifier)
+func detectHardcodedSecret(c *Candidate) float64 {
+	identifier := c.AssignedIdentifier
 	if identifier == "" {
-		identifier = strings.ToLower(c.Name)
+		identifier = c.Name
+	}
+	if !containsAnyLower(strings.ToLower(identifier), lowerSecretIdents) {
+		return 0
 	}
 
-	isSecretName := false
-	for _, pattern := range secretIdentifierPatterns {
-		if strings.Contains(identifier, pattern) {
-			isSecretName = true
-			break
-		}
-	}
-
-	if !isSecretName {
-		return 0.0
-	}
-
-	// Check if value looks hardcoded (string literal, long enough)
 	value := c.AssignedValue
 	if value == "" {
 		value = c.RawLine
 	}
-
-	// Skip if value comes from environment or input
 	lowerVal := strings.ToLower(value)
-	if strings.Contains(lowerVal, "environ") || strings.Contains(lowerVal, "getenv") ||
-		strings.Contains(lowerVal, "input(") || strings.Contains(lowerVal, "config.") ||
-		strings.Contains(lowerVal, "os.") || strings.Contains(lowerVal, "env.") {
-		return 0.0
-	}
-
-	// If value contains a known secret prefix, strong signal
-	for _, prefix := range secretPrefixes {
-		if strings.Contains(value, prefix) {
-			return 1.0
+	for _, src := range []string{"environ", "getenv", "input(", "config.", "os.", "env."} {
+		if strings.Contains(lowerVal, src) {
+			return 0
 		}
 	}
-
-	// If a secret-named variable is assigned a string literal of decent length
-	if (strings.Contains(value, "\"") || strings.Contains(value, "'")) && len(value) > 10 {
-		return 1.0
+	for _, prefix := range secretPrefixes {
+		if strings.Contains(value, prefix) {
+			return 1
+		}
 	}
-
-	return 0.0
+	if (strings.Contains(value, "\"") || strings.Contains(value, "'")) && len(value) > 10 {
+		return 1
+	}
+	return 0
 }
 
-// containsAny checks if text contains any of the given patterns (case-insensitive).
-func containsAny(text string, patterns []string) bool {
-	lower := strings.ToLower(text)
+// containsAnyLower reports whether lowered text contains any lowered pattern.
+func containsAnyLower(text string, patterns []string) bool {
 	for _, p := range patterns {
-		if strings.Contains(lower, strings.ToLower(p)) {
+		if strings.Contains(text, p) {
 			return true
 		}
 	}

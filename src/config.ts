@@ -6,6 +6,8 @@ export const CONFIG_SECTION = 'sentra';
 export interface SentraConfig {
     enabled: boolean;
     autoScan: boolean;
+    scanOnType: boolean;
+    scanOnTypeDelay: number;
     severityLevel: Severity;
     excludePatterns: string[];
     showStatusBar: boolean;
@@ -20,6 +22,8 @@ export function getConfig(scope?: vscode.ConfigurationScope): SentraConfig {
     return {
         enabled: c.get<boolean>('enabled', true),
         autoScan: c.get<boolean>('autoScan', true),
+        scanOnType: c.get<boolean>('scanOnType', true),
+        scanOnTypeDelay: Math.max(50, c.get<number>('scanOnTypeDelay', 300)),
         severityLevel: isSeverity(severity) ? severity : 'Medium',
         excludePatterns: c.get<string[]>('excludePatterns', []),
         showStatusBar: c.get<boolean>('showStatusBar', true),

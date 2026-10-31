@@ -72,7 +72,7 @@ def export_tree(tree, class_names):
     return {"nodes": nodes}
 
 
-def export_model(clf, class_names, severities, output_path="../model.json"):
+def export_model(clf, class_names, severities, output_path="../internal/engine/model.json"):
     """Export the full random forest to JSON."""
     trees = []
     for estimator in clf.estimators_:

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { AnalyzerError, findAnalyzerBinary } from './analyzerBinary';
-import { AnalyzerClient } from './analyzerClient';
+import { DaemonClient } from './analyzerClient';
 import { CONFIG_SECTION, getConfig } from './config';
 import { ReportPanel } from './reportPanel';
 import { ResultCache } from './resultCache';
@@ -16,7 +16,9 @@ export function activate(context: vscode.ExtensionContext): void {
     const binary = findAnalyzerBinary(context.extensionPath);
     let analyzer: Analyzer;
     if (binary) {
-        analyzer = new AnalyzerClient(binary);
+        const daemon = new DaemonClient(binary, (m) => log.appendLine(m));
+        context.subscriptions.push({ dispose: () => daemon.dispose() });
+        analyzer = daemon;
         log.appendLine(`Using analyzer ${binary}`);
     } else {
         const msg = `No Sentra analyzer binary for ${process.platform}-${process.arch}. Install the platform-specific build of the extension.`;
@@ -41,6 +43,25 @@ export function activate(context: vscode.ExtensionContext): void {
             void scanner.scanDocument(doc);
         }
     };
+
+    // Debounced scan-on-type: rescan an edited document once typing pauses.
+    const typingTimers = new Map<string, NodeJS.Timeout>();
+    const onType = (e: vscode.TextDocumentChangeEvent) => {
+        const cfg = getConfig(e.document.uri);
+        if (!cfg.scanOnType || !cfg.autoScan || e.contentChanges.length === 0) {
+            return;
+        }
+        const key = e.document.uri.toString();
+        clearTimeout(typingTimers.get(key));
+        typingTimers.set(
+            key,
+            setTimeout(() => {
+                typingTimers.delete(key);
+                void scanner.scanDocument(e.document);
+            }, cfg.scanOnTypeDelay),
+        );
+    };
+    context.subscriptions.push({ dispose: () => typingTimers.forEach(clearTimeout) });
 
     context.subscriptions.push(
         log,
@@ -104,6 +125,7 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('sentra.showLog', () => log.show()),
         vscode.workspace.onDidOpenTextDocument(autoScan),
         vscode.workspace.onDidSaveTextDocument(autoScan),
+        vscode.workspace.onDidChangeTextDocument(onType),
         vscode.workspace.onDidCloseTextDocument((doc) => {
             // Keep workspace-scan results for files on disk; drop results for closed untitled buffers.
             if (doc.uri.scheme === 'untitled') {

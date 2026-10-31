@@ -1,10 +1,19 @@
 export type Severity = 'High' | 'Medium' | 'Low';
 
-/** A single finding as emitted by the Go analyzer (1-based line numbers). */
+/** A single finding as emitted by the Go analyzer (1-based lines and columns). */
 export interface Finding {
     line: number;
-    issue: string;
+    column?: number;
+    endLine?: number;
+    endColumn?: number;
+    /** Stable rule ID, e.g. "weak_crypto". */
+    rule?: string;
+    cwe?: string;
     severity: Severity;
+    confidence?: number;
+    /** The callee or identifier that triggered the finding. */
+    symbol?: string;
+    issue: string;
 }
 
 export interface FileReport {

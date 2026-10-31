@@ -12,6 +12,23 @@ All notable changes to Sentra are documented here. The format follows
 - Removed the unused `pythonPath` setting.
 - The extension is now bundled with esbuild (`dist/extension.js`).
 
+### Added
+- Long-lived analyzer daemon (`sentra-analyzer --serve`, newline-delimited JSON over
+  stdio): the model and grammars load once, requests are pipelined and analyzed in
+  parallel (`runtime.NumCPU()` workers), and the daemon is restarted on crash.
+- Debounced scan-on-type (`sentra.scanOnType`, `sentra.scanOnTypeDelay`, default 300 ms).
+- Workspace rescans skip files whose mtime and size are unchanged, without reading them.
+- Diagnostics underline the offending expression and link to the CWE entry.
+- Benchmark harness: `cmd/sentra-bench`, `scripts/bench-daemon.mjs`, `scripts/benchmark.sh`.
+
+### Performance
+- Serial analysis of django 5.1 (2,899 files, 501k lines) went from 38.7 s to 8.2 s,
+  and the 4-worker workspace scan from 19.0 s to 2.8 s. See BENCHMARKS.md.
+  - Minified files no longer cost quadratic time (one 163 KB line took ~10 s).
+  - AST walk uses a TreeCursor and an ancestor-context stack instead of
+    `Child(i)` loops and repeated `Parent()` walks.
+  - Pattern tables are lowercased once; node types are classified by symbol ID.
+
 ### Fixed
 - **Security:** the analyzer was launched with `child_process.exec` and an interpolated
   command string (shell command injection via file paths). It is now spawned directly

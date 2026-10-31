@@ -25,3 +25,6 @@ analyzer-go/training/.cache/
 .DS_Store
 Thumbs.db
 *.swp
+
+# Benchmark corpora
+.bench/

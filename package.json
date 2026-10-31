@@ -109,6 +109,17 @@
           "default": true,
           "description": "Scan files when they are opened or saved."
         },
+        "sentra.scanOnType": {
+          "type": "boolean",
+          "default": true,
+          "description": "Rescan the active file as you type (after a pause; see sentra.scanOnTypeDelay). Requires sentra.autoScan."
+        },
+        "sentra.scanOnTypeDelay": {
+          "type": "number",
+          "default": 300,
+          "minimum": 50,
+          "description": "Milliseconds to wait after the last keystroke before rescanning."
+        },
         "sentra.severityLevel": {
           "type": "string",
           "enum": [

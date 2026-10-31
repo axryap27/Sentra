@@ -31,6 +31,8 @@ export class Scanner implements vscode.Disposable {
     /** Unfiltered findings per URI, so a severity change re-filters without rescanning. */
     private readonly findings = new Map<string, Finding[]>();
     private lastReport: FileReport[] | undefined;
+    /** Per-URI scan counter used to discard results of superseded scans (scan-on-type). */
+    private readonly generations = new Map<string, number>();
 
     constructor(
         private readonly analyzer: Analyzer,
@@ -69,9 +71,17 @@ export class Scanner implements vscode.Disposable {
             return;
         }
         const language = resolveLanguage(doc.languageId, doc.uri.fsPath)!;
+        const uriKey = doc.uri.toString();
+        const generation = (this.generations.get(uriKey) ?? 0) + 1;
+        this.generations.set(uriKey, generation);
+        const version = doc.version;
         this.statusBar.setScanning();
         try {
             const { findings } = await this.analyzeCached(text, language, cfg);
+            // Drop stale results: a newer scan of this document started, or it was edited meanwhile.
+            if (this.generations.get(uriKey) !== generation || doc.version !== version) {
+                return;
+            }
             this.setFindings(doc.uri, findings);
         } catch (e) {
             this.reportError(e);
@@ -110,20 +120,39 @@ export class Scanner implements vscode.Disposable {
         const scanOne = async (uri: vscode.Uri) => {
             try {
                 const doc = openDocs.get(uri.toString());
-                let text: string;
-                if (doc) {
-                    text = doc.getText();
+                const language = resolveLanguage(doc?.languageId, uri.fsPath)!;
+                let findings: Finding[];
+                if (doc?.isDirty) {
+                    const r = await this.analyzeCached(doc.getText(), language, cfg);
+                    findings = r.findings;
+                    cacheHits += r.cached ? 1 : 0;
                 } else {
-                    // Read from disk directly: openTextDocument would fire onDidOpen events and is much slower.
+                    // Read from disk directly: openTextDocument fires onDidOpen events and is much slower.
                     const stat = await fs.promises.stat(uri.fsPath);
                     if (stat.size > cfg.maxFileSize) {
                         return;
                     }
-                    text = await fs.promises.readFile(uri.fsPath, 'utf8');
+                    const known = cfg.enableIncrementalScanning
+                        ? this.cache.getByStat(uri.fsPath, stat.mtimeMs, stat.size)
+                        : undefined;
+                    if (known) {
+                        findings = known; // unchanged on disk: no read, no hash, no analysis
+                        cacheHits++;
+                    } else {
+                        const text = await fs.promises.readFile(uri.fsPath, 'utf8');
+                        const r = await this.analyzeCached(text, language, cfg);
+                        findings = r.findings;
+                        cacheHits += r.cached ? 1 : 0;
+                        if (cfg.enableIncrementalScanning) {
+                            this.cache.setStat(
+                                uri.fsPath,
+                                stat.mtimeMs,
+                                stat.size,
+                                this.cache.key(language, text),
+                            );
+                        }
+                    }
                 }
-                const language = resolveLanguage(doc?.languageId, uri.fsPath)!;
-                const { findings, cached } = await this.analyzeCached(text, language, cfg);
-                cacheHits += cached ? 1 : 0;
                 this.setFindings(uri, findings);
                 const visible = filterBySeverity(findings, cfg.severityLevel);
                 if (visible.length) {
@@ -202,6 +231,7 @@ export class Scanner implements vscode.Disposable {
 
     forget(uri: vscode.Uri): void {
         this.findings.delete(uri.toString());
+        this.generations.delete(uri.toString());
         this.diagnostics.delete(uri);
         this.refreshStatus();
     }
@@ -246,7 +276,13 @@ export function filterBySeverity(findings: Finding[], min: Severity): Finding[] 
 
 function toDiagnostic(f: Finding): vscode.Diagnostic {
     const line = Math.max(0, f.line - 1);
-    const range = new vscode.Range(line, 0, line, Number.MAX_SAFE_INTEGER);
+    const col = Math.max(0, (f.column ?? 1) - 1);
+    // Underline the node itself when it is on one line, otherwise the rest of the first line.
+    const endCol =
+        f.endLine === f.line && f.endColumn && f.endColumn > (f.column ?? 1)
+            ? f.endColumn - 1
+            : Number.MAX_SAFE_INTEGER;
+    const range = new vscode.Range(line, col, line, endCol);
     const severity =
         f.severity === 'High'
             ? vscode.DiagnosticSeverity.Error
@@ -255,7 +291,16 @@ function toDiagnostic(f: Finding): vscode.Diagnostic {
               : vscode.DiagnosticSeverity.Information;
     const d = new vscode.Diagnostic(range, f.issue, severity);
     d.source = 'Sentra';
+    if (f.rule) {
+        d.code = f.cwe ? { value: `${f.rule} (${f.cwe})`, target: cweUri(f.cwe) } : f.rule;
+    }
     return d;
+}
+
+function cweUri(cwe: string): vscode.Uri {
+    return vscode.Uri.parse(
+        `https://cwe.mitre.org/data/definitions/${cwe.replace(/^CWE-/, '')}.html`,
+    );
 }
 
 function isExcluded(uri: vscode.Uri, patterns: string[]): boolean {
